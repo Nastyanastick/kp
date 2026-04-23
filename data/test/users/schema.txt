@@ -1,0 +1,3 @@
+id|int|0|0
+name|string|0|0
+age|int|0|0

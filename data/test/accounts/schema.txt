@@ -1,0 +1,4 @@
+id|int|1|1
+login|string|1|1
+full_name|string|1|0
+age|int|0|0
