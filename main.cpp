@@ -7,15 +7,18 @@
 #include <algorithm>
 #include <cctype>
 #include <set>
+#include "module/index_manager.h"
 
 namespace fs = std::filesystem;
 
 const std::string DATA_DIR = "data";
 std::string currentDatabase; // текущая база данных
 
+void deleteFrom(const std::string& body);
+
 struct Column { // один столбец таблицы
     std::string name;
-    std::string type;       // int or string
+    std::string type; // int или string
     bool notNull = false;
     bool indexed = false;
 };
@@ -384,6 +387,32 @@ std::vector<std::string> splitValues(const std::string& text) {
     return values;
 }
 
+std::vector<std::vector<std::string>> loadData(const fs::path& tablePath) {
+    std::vector<std::vector<std::string>> rows;
+
+    std::ifstream in(tablePath / "data.txt");
+    std::string line;
+
+    while (std::getline(in, line)) {
+        std::vector<std::string> row;
+        std::string current;
+
+        for (char ch : line) {
+            if (ch == '|') {
+                row.push_back(current);
+                current.clear();
+            } else {
+                current += ch;
+            }
+        }
+
+        row.push_back(current);
+        rows.push_back(row);
+    }
+
+    return rows;
+}
+
 void insertInto(const std::string& body) {
     if (currentDatabase.empty()) {
         std::cout << "Error: no database selected\n";
@@ -417,6 +446,9 @@ void insertInto(const std::string& body) {
     }
 
     auto schema = loadSchema(tablePath);
+
+    IndexManager indexManager;
+    indexManager.buildIndexes(tablePath, schema);
 
     auto columnNames = splitByCommaTopLevel(columnsText);
 
@@ -464,6 +496,13 @@ void insertInto(const std::string& body) {
         }
 
         row[index] = val;
+
+        if (schema[index].indexed) {
+            if (!indexManager.checkUnique(colName, val)) {
+                std::cout << "Error: duplicate value for INDEXED column " << colName << "\n";
+                return;
+            }
+        }
     }
 
     for (size_t i = 0; i < schema.size(); i++) {
@@ -473,12 +512,19 @@ void insertInto(const std::string& body) {
         }
     }
 
+    auto oldRows = loadData(tablePath);
+    size_t newRowId = oldRows.size();
     std::ofstream out(tablePath / "data.txt", std::ios::app);
     for (size_t i = 0; i < row.size(); i++) {
         if (i > 0) out << "|";
         out << row[i];
     }
     out << "\n";
+    for (size_t i = 0; i < schema.size(); i++) {
+        if (schema[i].indexed && row[i] != "NULL") {
+            indexManager.insertKey(schema[i].name, row[i], newRowId);
+        }
+    }
 
     std::cout << "1 row inserted\n";
 }
@@ -573,32 +619,73 @@ void dropTable(const std::string& tableName) {
     std::cout << "Table '" << tableName << "' dropped\n";
 }
 
-
-
-std::vector<std::vector<std::string>> loadData(const fs::path& tablePath) {
-    std::vector<std::vector<std::string>> rows;
-
-    std::ifstream in(tablePath / "data.txt");
-    std::string line;
-
-    while (std::getline(in, line)) {
-        std::vector<std::string> row;
-        std::string current;
-
-        for (char ch : line) {
-            if (ch == '|') {
-                row.push_back(current);
-                current.clear();
-            } else {
-                current += ch;
-            }
-        }
-
-        row.push_back(current);
-        rows.push_back(row);
+void deleteFrom(const std::string& body) {
+    if (currentDatabase.empty()) {
+        std::cout << "Error: no database selected\n";
+        return;
     }
 
-    return rows;
+    std::string upperBody = toUpper(body);
+    size_t wherePos = upperBody.find(" WHERE ");
+
+    if (wherePos == std::string::npos) {
+        std::cout << "Error: DELETE requires WHERE\n";
+        return;
+    }
+
+    std::string tableName = trim(body.substr(0, wherePos));
+    std::string condText = trim(body.substr(wherePos + 7));
+
+    std::string error;
+    Condition cond;
+    if (!parseCondition(condText, cond, error)) {
+        std::cout << "Error: " << error << "\n";
+        return;
+    }
+
+    fs::path tablePath = fs::path(DATA_DIR) / currentDatabase / tableName;
+    if (!fs::exists(tablePath)) {
+        std::cout << "Error: table does not exist\n";
+        return;
+    }
+
+    auto schema = loadSchema(tablePath);
+    auto rows = loadData(tablePath);
+
+    std::vector<std::vector<std::string>> keptRows;
+    int deletedCount = 0;
+
+    for (const auto& row : rows) {
+        std::string matchError;
+        bool matched = rowMatchesCondition(row, schema, cond, matchError);
+
+        if (!matchError.empty()) {
+            std::cout << "Error: " << matchError << "\n";
+            return;
+        }
+
+        if (matched) {
+            deletedCount++;
+        } else {
+            keptRows.push_back(row);
+        }
+    }
+
+    std::ofstream out(tablePath / "data.txt", std::ios::trunc);
+    if (!out) {
+        std::cout << "Error: failed to rewrite data file\n";
+        return;
+    }
+
+    for (const auto& row : keptRows) {
+        for (size_t i = 0; i < row.size(); i++) {
+            if (i > 0) out << "|";
+            out << row[i];
+        }
+        out << "\n";
+    }
+
+    std::cout << deletedCount << " row(s) deleted\n";
 }
 
 void selectFrom(const std::string& body) {
@@ -639,52 +726,92 @@ void selectFrom(const std::string& body) {
     auto schema = loadSchema(tablePath);
     auto rows = loadData(tablePath);
 
-    std::cout << "[\n";
+    IndexManager indexManager;
+    indexManager.buildIndexes(tablePath, schema);
 
-    bool firstPrinted = true;
+    bool useIndex = false;
+    size_t indexedRowId = 0;
 
-    for (const auto& row : rows) {
-        if (hasWhere) {
-            std::string error;
-            bool matched = rowMatchesCondition(row, schema, cond, error);
+    if (hasWhere && cond.op == "==" && indexManager.hasIndex(cond.columnName)) {
+        std::string key = cond.value;
 
-            if (!error.empty()) {
-                std::cout << "Error: " << error << "\n";
+        int columnIndex = -1;
+        for (size_t i = 0; i < schema.size(); i++) {
+            if (schema[i].name == cond.columnName) {
+                columnIndex = static_cast<int>(i);
+                break;
+            }
+        }
+
+        if (columnIndex != -1) {
+            if (schema[columnIndex].type == "string") {
+                if (key.size() < 2 || key.front() != '"' || key.back() != '"') {
+                    std::cout << "Error: expected string literal in WHERE for column " << cond.columnName << "\n";
+                    return;
+                }
+                key = key.substr(1, key.size() - 2);
+            }
+
+            if (indexManager.findRowId(cond.columnName, key, indexedRowId)) {
+                useIndex = true;
+            } else {
+                std::cout << "[\n]\n";
                 return;
             }
-
-            if (!matched) {
-                continue;
-            }
         }
-
-        if (!firstPrinted) {
-            std::cout << ",\n";
-        }
-
-        std::cout << "  {";
-
-        for (size_t j = 0; j < schema.size(); j++) {
-            std::cout << "\"" << schema[j].name << "\": ";
-
-            std::string val = (j < row.size()) ? row[j] : "NULL";
-
-            if (val == "NULL") {
-                std::cout << "null";
-            } else if (schema[j].type == "int") {
-                std::cout << val;
-            } else {
-                std::cout << "\"" << val << "\"";
-            }
-
-            if (j + 1 < schema.size()) {
-                std::cout << ", ";
-            }
-        }
-
-        std::cout << "}";
-        firstPrinted = false;
     }
+
+    std::cout << "[\n";
+bool firstPrinted = true;
+
+for (size_t rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+    if (useIndex && rowIndex != indexedRowId) {
+        continue;
+    }
+
+    const auto& row = rows[rowIndex];
+
+    if (hasWhere && !useIndex) {
+        std::string error;
+        bool matched = rowMatchesCondition(row, schema, cond, error);
+
+        if (!error.empty()) {
+            std::cout << "Error: " << error << "\n";
+            return;
+        }
+
+        if (!matched) {
+            continue;
+        }
+    }
+
+    if (!firstPrinted) {
+        std::cout << ",\n";
+    }
+
+    std::cout << "  {";
+
+    for (size_t j = 0; j < schema.size(); j++) {
+        std::cout << "\"" << schema[j].name << "\": ";
+
+        std::string val = (j < row.size()) ? row[j] : "NULL";
+
+        if (val == "NULL") {
+            std::cout << "null";
+        } else if (schema[j].type == "int") {
+            std::cout << val;
+        } else {
+            std::cout << "\"" << val << "\"";
+        }
+
+        if (j + 1 < schema.size()) {
+            std::cout << ", ";
+        }
+    }
+
+    std::cout << "}";
+    firstPrinted = false;
+}
 
     std::cout << "\n]\n";
 }
@@ -724,6 +851,9 @@ void processCommand(const std::string& command) {
     } else if (upper.rfind("SELECT * FROM ", 0) == 0) {
         std::string body = trim(cleaned.substr(14));
         selectFrom(body);
+    } else if (upper.rfind("DELETE FROM ", 0) == 0) {
+        std::string body = trim(cleaned.substr(12));
+        deleteFrom(body);
     } else {
         std::cout << "Error: unknown command\n";
     }
