@@ -30,6 +30,58 @@ std::string toUpper(const std::string& s) {
     return result;
 }
 
+bool isValidKeywordCase(const std::string& word) {
+    if (word.empty()) {
+        return false;
+    }
+
+    bool hasLower = false;
+    bool hasUpper = false;
+
+    for (char ch : word) {
+        if (std::isalpha(static_cast<unsigned char>(ch))) {
+            if (std::islower(static_cast<unsigned char>(ch))) {
+                hasLower = true;
+            }
+            if (std::isupper(static_cast<unsigned char>(ch))) {
+                hasUpper = true;
+            }
+        }
+    }
+
+    return !(hasLower && hasUpper);
+}
+
+bool checkKeywordCases(const std::string& command) {
+    std::istringstream iss(command);
+    std::string word;
+
+    while (iss >> word) {
+        while (!word.empty() && (word.back() == '(' || word.back() == ',' || word.back() == ';')) {
+            word.pop_back();
+        }
+
+        std::string upper = toUpper(word);
+
+        if (upper == "CREATE" || upper == "DATABASE" || upper == "DROP" ||
+            upper == "USE" || upper == "TABLE" || upper == "INSERT" ||
+            upper == "INTO" || upper == "VALUE" || upper == "VALUES" ||
+            upper == "SELECT" || upper == "FROM" || upper == "WHERE" ||
+            upper == "UPDATE" || upper == "SET" || upper == "DELETE" ||
+            upper == "AS" || upper == "BETWEEN" || upper == "AND" ||
+            upper == "LIKE" || upper == "NOT_NULL" || upper == "INDEXED") {
+
+            if (!isValidKeywordCase(word)) {
+                return false;
+            }
+        }
+    }
+
+    return true;
+}
+
+
+
 bool isValidName(const std::string& name) {
     if (name.empty()) {
         return false;
@@ -75,6 +127,11 @@ void processCommand(const std::string& command) {
         cleaned = trim(cleaned);
     }
 
+    if (!checkKeywordCases(cleaned)) {
+        std::cout << "Error: invalid keyword case\n";
+        return;
+    }
+
     std::string upper = toUpper(cleaned);
 
     if (upper.rfind("CREATE DATABASE ", 0) == 0) {
@@ -95,9 +152,12 @@ void processCommand(const std::string& command) {
     } else if (upper.rfind("INSERT INTO ", 0) == 0) {
         std::string body = trim(cleaned.substr(12));
         insertInto(body);
-    } else if (upper.rfind("SELECT * FROM ", 0) == 0) {
-        std::string body = trim(cleaned.substr(14));
+    } else if (upper.rfind("SELECT ", 0) == 0) {
+        std::string body = trim(cleaned.substr(7));
         selectFrom(body);
+    } else if (upper.rfind("UPDATE ", 0) == 0) {
+        std::string body = trim(cleaned.substr(7));
+        updateRows(body);
     } else if (upper.rfind("DELETE FROM ", 0) == 0) {
         std::string body = trim(cleaned.substr(12));
         deleteFrom(body);
