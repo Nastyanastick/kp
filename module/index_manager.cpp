@@ -1,86 +1,128 @@
 #include "index_manager.h"
-#include <fstream>
-#include <sstream>
-#include <algorithm>
 
-struct Column {
-    std::string name;
-    std::string type;
-    bool notNull = false;
-    bool indexed = false;
-};
+IndexManager::IndexManager(int order)
+    : order(order)
+{
+}
 
-static std::vector<std::vector<std::string>> loadDataRows(const fs::path& tablePath) {
-    std::vector<std::vector<std::string>> rows;
-    std::ifstream in(tablePath / "data.txt");
+std::string IndexManager::valueToKey(const Value& v) const {
+    if (v.type == Value::INT) {
+        return std::to_string(v.intValue);
+    }
+    if (v.type == Value::STRING) {
+        return v.stringValue;
+    }
+    return "";
+}
+
+void IndexManager::createIndex(const std::string& table,
+                               const std::string& column,
+                               const std::string& type)
+{
+    if (indexes[table].count(column) == 0) {
+        indexes[table][column] = new BPlusTree(order, type);
+    }
+}
+
+void IndexManager::insertKey(const std::string& table,
+                             const std::string& column,
+                             const Value& value,
+                             size_t rowId)
+{
+    if (!hasIndex(table, column)) return;
+
+    std::string key = valueToKey(value);
+    indexes[table][column]->insert(key, rowId);
+}
+
+void IndexManager::deleteKey(const std::string& table,
+                             const std::string& column,
+                             const Value& value)
+{
+    if (!hasIndex(table, column)) return;
+
+    std::string key = valueToKey(value);
+    indexes[table][column]->remove(key);
+}
+
+std::vector<size_t> IndexManager::find(const std::string& table,
+                                       const std::string& column,
+                                       const Value& value)
+{
+    if (!hasIndex(table, column)) return {};
+
+    std::string key = valueToKey(value);
+    return indexes[table][column]->searchAll(key);
+}
+
+std::vector<size_t> IndexManager::findRange(const std::string& table,
+                                            const std::string& column,
+                                            const Value& left,
+                                            const Value& right)
+{
+    if (!hasIndex(table, column)) return {};
+
+    return indexes[table][column]->rangeSearch(
+        valueToKey(left),
+        valueToKey(right)
+    );
+}
+
+bool IndexManager::hasIndex(const std::string& table,
+                            const std::string& column) const
+{
+    auto it = indexes.find(table);
+    if (it == indexes.end()) return false;
+
+    return it->second.count(column) > 0;
+}
+
+void IndexManager::saveIndex(const std::string& table,
+                             const std::string& column,
+                             const std::string& path)
+{
+    if (!hasIndex(table, column)) return;
+
+    std::ofstream out(path);
+    if (!out.is_open()) return;
+
+    BPlusTree* tree = indexes[table][column];
+    BPlusNode* leaf = tree->getRoot();
+
+    // спускаемся до самого левого листа
+    while (leaf && !leaf->isLeaf) {
+        leaf = leaf->children[0];
+    }
+
+    // идём по листьям через next
+    while (leaf) {
+        for (size_t i = 0; i < leaf->keys.size(); i++) {
+            out << leaf->keys[i] << "|" << leaf->values[i] << "\n";
+        }
+        leaf = leaf->next;
+    }
+}
+
+
+void IndexManager::loadIndex(const std::string& table,
+                             const std::string& column,
+                             const std::string& type,
+                             const std::string& path)
+{
+    // создаём пустое дерево
+    createIndex(table, column, type);
+
+    std::ifstream in(path);
+    if (!in.is_open()) return;
+
     std::string line;
-
     while (std::getline(in, line)) {
-        std::vector<std::string> row;
-        std::string cur;
+        size_t pos = line.find('|');
+        if (pos == std::string::npos) continue;
 
-        for (char ch : line) {
-            if (ch == '|') {
-                row.push_back(cur);
-                cur.clear();
-            } else {
-                cur += ch;
-            }
-        }
+        std::string key = line.substr(0, pos);
+        size_t rowId = std::stoull(line.substr(pos + 1));
 
-        row.push_back(cur);
-        rows.push_back(row);
+        indexes[table][column]->insert(key, rowId);
     }
-
-    return rows;
-}
-
-void IndexManager::buildIndexes(const fs::path& tablePath, const std::vector<Column>& schema) {
-    indexes.clear();
-
-    for (size_t i = 0; i < schema.size(); i++) {
-        if (schema[i].indexed) {
-            indexes[schema[i].name] = std::make_unique<BPlusTree>(4, schema[i].type);
-        }
-    }
-
-    auto rows = loadDataRows(tablePath);
-
-    for (size_t rowId = 0; rowId < rows.size(); rowId++) {
-        for (size_t col = 0; col < schema.size(); col++) {
-            if (!schema[col].indexed) continue;
-            if (col >= rows[rowId].size()) continue;
-            if (rows[rowId][col] == "NULL") continue;
-
-            indexes[schema[col].name]->insert(rows[rowId][col], rowId);
-        }
-    }
-}
-
-bool IndexManager::findRowId(const std::string& columnName, const std::string& key, size_t& rowId) const {
-    auto it = indexes.find(columnName);
-    if (it == indexes.end()) {
-        return false;
-    }
-
-    return it->second->search(key, rowId);
-}
-
-bool IndexManager::checkUnique(const std::string& columnName, const std::string& key) const {
-    auto it = indexes.find(columnName);
-    if (it == indexes.end()) return true;
-
-    size_t dummy;
-    return !it->second->search(key, dummy);
-}
-
-void IndexManager::insertKey(const std::string& columnName, const std::string& key, size_t rowId) {
-    auto it = indexes.find(columnName);
-    if (it != indexes.end()) {
-        it->second->insert(key, rowId);
-    }
-}
-
-bool IndexManager::hasIndex(const std::string& columnName) const {
-    return indexes.find(columnName) != indexes.end();
 }
