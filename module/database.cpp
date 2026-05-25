@@ -2,16 +2,29 @@
 #include "parser.h"
 
 #include <iostream>
-#include <filesystem>
-
-namespace fs = std::filesystem;
+#include <direct.h>
+#include <io.h>
+#include <cstdlib>
 
 const std::string DATA_DIR = "data";
 std::string currentDatabase;
 
+static bool pathExists(const std::string& path) {
+    return _access(path.c_str(), 0) == 0;
+}
+
+static bool createDirectory(const std::string& path) {
+    return _mkdir(path.c_str()) == 0;
+}
+
+static void removeAll(const std::string& path) {
+    std::string command = "rmdir /s /q \"" + path + "\"";
+    system(command.c_str());
+}
+
 void ensureDataDirectory() {
-    if (!fs::exists(DATA_DIR)) {
-        fs::create_directory(DATA_DIR);
+    if (!pathExists(DATA_DIR)) {
+        createDirectory(DATA_DIR);
     }
 }
 
@@ -23,14 +36,14 @@ void createDatabase(const std::string& dbName) {
 
     ensureDataDirectory();
 
-    fs::path dbPath = fs::path(DATA_DIR) / dbName;
+    std::string dbPath = DATA_DIR + "/" + dbName;
 
-    if (fs::exists(dbPath)) {
+    if (pathExists(dbPath)) {
         std::cout << "Error: database already exists\n";
         return;
     }
 
-    fs::create_directory(dbPath);
+    createDirectory(dbPath);
     std::cout << "Database '" << dbName << "' created\n";
 }
 
@@ -40,14 +53,14 @@ void dropDatabase(const std::string& dbName) {
         return;
     }
 
-    fs::path dbPath = fs::path(DATA_DIR) / dbName;
+    std::string dbPath = DATA_DIR + "/" + dbName;
 
-    if (!fs::exists(dbPath)) {
+    if (!pathExists(dbPath)) {
         std::cout << "Error: database does not exist\n";
         return;
     }
 
-    fs::remove_all(dbPath);
+    removeAll(dbPath);
 
     if (currentDatabase == dbName) {
         currentDatabase.clear();
@@ -62,9 +75,9 @@ void useDatabase(const std::string& dbName) {
         return;
     }
 
-    fs::path dbPath = fs::path(DATA_DIR) / dbName;
+    std::string dbPath = DATA_DIR + "/" + dbName;
 
-    if (!fs::exists(dbPath)) {
+    if (!pathExists(dbPath)) {
         std::cout << "Error: database does not exist\n";
         return;
     }

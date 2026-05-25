@@ -3,7 +3,6 @@
 #include <string>
 #include <vector>
 #include "value.h"
-#include <filesystem>
 
 struct Column {
     std::string name;
@@ -42,5 +41,5 @@ bool parseCondition(const std::string& text, Condition& cond, std::string& error
 std::vector<std::string> splitByCommaTopLevel(const std::string& text);
 std::vector<std::string> splitValues(const std::string& text);
 
-std::filesystem::path resolveTablePath(const std::string& tableName);
+std::string resolveTablePath(const std::string& tableName);
 std::string getPureTableName(const std::string& tableName);

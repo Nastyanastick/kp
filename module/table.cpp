@@ -8,34 +8,55 @@
 #include <sstream>
 #include <string>
 #include <vector>
-#include <filesystem>
+#include <direct.h>
+#include <io.h>
+#include <cstdlib>
 #include <algorithm>
 #include <set>
 #include <cctype>
 #include <regex>
 #include <limits>
 
-namespace fs = std::filesystem;
+static bool pathExists(const std::string& path) {
+    return _access(path.c_str(), 0) == 0;
+}
 
-fs::path resolveTablePath(const std::string& tableName) {
+static bool createDirectory(const std::string& path) {
+    return _mkdir(path.c_str()) == 0;
+}
+
+static void removeAll(const std::string& path) {
+    std::string command = "rmdir /s /q \"" + path + "\"";
+    system(command.c_str());
+}
+
+std::string makePath(const std::string& a, const std::string& b) {
+    if (a.empty()) {
+        return b;
+    }
+
+    return a + "/" + b;
+}
+
+std::string resolveTablePath(const std::string& tableName) {
     size_t dotPos = tableName.find('.');
 
     if (dotPos == std::string::npos) {
         if (currentDatabase.empty()) {
-            return {};
+            return "";
         }
 
-        return fs::path(DATA_DIR) / currentDatabase / tableName;
+        return DATA_DIR + "/" + currentDatabase + "/" + tableName;
     }
 
     std::string dbName = trim(tableName.substr(0, dotPos));
     std::string pureTableName = trim(tableName.substr(dotPos + 1));
 
     if (!isValidName(dbName) || !isValidName(pureTableName)) {
-        return {};
+        return "";
     }
 
-    return fs::path(DATA_DIR) / dbName / pureTableName;
+    return DATA_DIR + "/" + dbName + "/" + pureTableName;
 }
 
 std::string getPureTableName(const std::string& tableName) {
@@ -341,9 +362,9 @@ bool rowMatchesCondition(
                          rightValue, leftType);
 }
 
-std::vector<Column> loadSchema(const fs::path& tablePath) {
+std::vector<Column> loadSchema(const std::string& tablePath) {
     std::vector<Column> columns;
-    std::ifstream in(tablePath / "schema.txt");
+    std::ifstream in(tablePath + "/schema.txt");
 
     std::string line;
     while (std::getline(in, line)) {
@@ -367,10 +388,10 @@ std::vector<Column> loadSchema(const fs::path& tablePath) {
 
     return columns;
 }
-std::vector<std::vector<std::string>> loadData(const fs::path& tablePath) {
+std::vector<std::vector<std::string>> loadData(const std::string& tablePath) {
     std::vector<std::vector<std::string>> rows;
 
-    std::ifstream in(tablePath / "data.txt");
+    std::ifstream in(tablePath + "/data.txt");
     std::string line;
 
     while (std::getline(in, line)) {
@@ -392,8 +413,8 @@ std::vector<std::vector<std::string>> loadData(const fs::path& tablePath) {
 
     return rows;
 }
-bool saveSchema(const fs::path& tablePath, const std::vector<Column>& columns) { // сохраняет описание таблицы в файл 
-    std::ofstream out(tablePath / "schema.txt");
+bool saveSchema(const std::string& tablePath, const std::vector<Column>& columns) { // сохраняет описание таблицы в файл 
+    std::ofstream out(tablePath + "/schema.txt");
     if (!out) {
         return false;
     }
@@ -434,13 +455,13 @@ void createTable(const std::string& commandBody) {
         return;
     }
 
-    fs::path tablePath = resolveTablePath(tableName);
+    std::string tablePath = resolveTablePath(tableName);
 
     if (tablePath.empty()) {
         std::cout << "Error: no database selected\n";
         return;
     }
-    if (fs::exists(tablePath)) {
+    if (pathExists(tablePath)) {
         std::cout << "Error: table already exists\n";
         return;
     }
@@ -467,13 +488,13 @@ void createTable(const std::string& commandBody) {
         columns.push_back(col);
     }
 
-    if (!fs::create_directory(tablePath)) {
+    if (!createDirectory(tablePath)) {
         std::cout << "Error: failed to create table directory\n";
         return;
     }
 
     if (!saveSchema(tablePath, columns)) {
-        fs::remove_all(tablePath);
+        removeAll(tablePath);
         std::cout << "Error: failed to save schema\n";
         return;
     }
@@ -482,19 +503,19 @@ void createTable(const std::string& commandBody) {
 }
 
 void dropTable(const std::string& tableName) {
-    fs::path tablePath = resolveTablePath(tableName);
+    std::string tablePath = resolveTablePath(tableName);
 
     if (tablePath.empty()) {
         std::cout << "Error: no database selected or invalid table name\n";
         return;
     }
 
-    if (!fs::exists(tablePath)) {
+    if (!pathExists(tablePath)) {
         std::cout << "Error: table does not exist\n";
         return;
     }
 
-    fs::remove_all(tablePath);
+    removeAll(tablePath);
     std::cout << "Table '" << getPureTableName(tableName) << "' dropped\n";
 }
 
@@ -605,14 +626,14 @@ void insertInto(const std::string& body) {
     std::string tableName = trim(left.substr(0, open1));
     std::string columnsText = left.substr(open1 + 1, close1 - open1 - 1);
 
-    fs::path tablePath = resolveTablePath(tableName);
+    std::string tablePath = resolveTablePath(tableName);
 
     if (tablePath.empty()) {
         std::cout << "Error: no database selected or invalid table name\n";
         return;
     }
 
-    if (!fs::exists(tablePath)) {
+    if (!pathExists(tablePath)) {
         std::cout << "Error: table does not exist\n";
         return;
     }
@@ -743,7 +764,7 @@ void insertInto(const std::string& body) {
         rowsToInsert.push_back(row);
     }
 
-    std::ofstream out(tablePath / "data.txt", std::ios::app);
+    std::ofstream out(tablePath + "/data.txt", std::ios::app);
 
     if (!out) {
         std::cout << "Error: failed to open data file\n";
@@ -788,9 +809,9 @@ void deleteFrom(const std::string& body) {
     std::string conditionText =
         trim(body.substr(wherePos + 5));
 
-    fs::path tablePath = resolveTablePath(tableName);
+    std::string tablePath = resolveTablePath(tableName);
 
-    if (tablePath.empty() || !fs::exists(tablePath)) {
+    if (tablePath.empty() || !pathExists(tablePath)) {
         std::cout << "Error: table does not exist\n";
         return;
     }
@@ -820,7 +841,7 @@ void deleteFrom(const std::string& body) {
         }
     }
 
-    std::ofstream out(tablePath / "data.txt");
+    std::ofstream out(tablePath + "/data.txt");
 
     for (const auto& row : remainingRows) {
         for (size_t i = 0; i < row.size(); i++) {
@@ -876,14 +897,14 @@ void selectFrom(const std::string& body) {
         hasWhere = true;
     }
 
-    fs::path tablePath = resolveTablePath(tableName);
+    std::string tablePath = resolveTablePath(tableName);
 
     if (tablePath.empty()) {
         std::cout << "Error: no database selected\n";
         return;
     }
 
-    if (!fs::exists(tablePath)) {
+    if (!pathExists(tablePath)) {
         std::cout << "Error: table does not exist\n";
         return;
     }
@@ -1135,9 +1156,9 @@ void updateRows(const std::string& body) {
     std::string setPart = trim(body.substr(setPos + 5, wherePos - (setPos + 5)));
     std::string wherePart = trim(body.substr(wherePos + 7));
 
-    fs::path tablePath = resolveTablePath(tableName);
+    std::string tablePath = resolveTablePath(tableName);
 
-    if (tablePath.empty() || !fs::exists(tablePath)) {
+    if (tablePath.empty() || !pathExists(tablePath)) {
         std::cout << "Error: table does not exist\n";
         return;
     }
@@ -1245,7 +1266,7 @@ void updateRows(const std::string& body) {
         }
     }
 
-    std::ofstream out(tablePath / "data.txt");
+    std::ofstream out(tablePath + "/data.txt");
 
     if (!out) {
         std::cout << "Error: failed to rewrite data file\n";
