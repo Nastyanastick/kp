@@ -109,7 +109,6 @@ void IndexManager::loadIndex(const std::string& table,
                              const std::string& type,
                              const std::string& path)
 {
-    // создаём пустое дерево
     createIndex(table, column, type);
 
     std::ifstream in(path);
