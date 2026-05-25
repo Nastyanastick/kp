@@ -3,6 +3,7 @@
 #include <string>
 #include <vector>
 #include "value.h"
+#include "string_pool.h"
 
 struct Column {
     std::string name;

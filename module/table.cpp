@@ -2,6 +2,7 @@
 #include "parser.h"
 #include "database.h"
 #include "index_manager.h"
+#include "string_pool.h"
 
 #include <iostream>
 #include <fstream>
@@ -413,6 +414,61 @@ std::vector<std::vector<std::string>> loadData(const std::string& tablePath) {
 
     return rows;
 }
+
+std::vector<std::vector<std::string>> loadDataWithPool(const std::string& tablePath, StringPool& pool) {
+    std::vector<std::vector<std::string>> rows;
+    
+    std::ifstream in(tablePath + "/data.txt");
+    if (!in) return rows;
+    
+    std::string line;
+    while (std::getline(in, line)) {
+        std::vector<std::string> row;
+        std::string current;
+        
+        for (char ch : line) {
+            if (ch == '|') {
+                row.push_back(current);
+                current.clear();
+            } else {
+                current += ch;
+            }
+        }
+        row.push_back(current);
+        for (size_t i = 0; i < row.size(); i++) {
+            if (row[i].find("pool:") == 0) {
+                size_t id = std::stoull(row[i].substr(5));
+                row[i] = pool.resolve(id);
+            }
+        }
+        
+        rows.push_back(row);
+    }
+    
+    return rows;
+}
+
+void saveDataWithPool(const std::string& tablePath, const std::vector<std::vector<std::string>>& rows, StringPool& pool, const std::vector<Column>& schema) {
+    std::ofstream out(tablePath + "/data.txt");
+    if (!out) return;
+    
+    for (const auto& row : rows) {
+        for (size_t i = 0; i < row.size(); i++) {
+            if (i > 0) out << "|";
+            
+            if (row[i] == "NULL") {
+                out << "NULL";
+            } else if (schema[i].type == "string") {
+                size_t id = pool.intern(row[i]);
+                out << "pool:" << id;
+            } else {
+                out << row[i];
+            }
+        }
+        out << "\n";
+    }
+}
+
 bool saveSchema(const std::string& tablePath, const std::vector<Column>& columns) { // сохраняет описание таблицы в файл 
     std::ofstream out(tablePath + "/schema.txt");
     if (!out) {
@@ -499,6 +555,9 @@ void createTable(const std::string& commandBody) {
         return;
     }
 
+    StringPool pool;
+    pool.save(tablePath + "/string_pool.txt");
+    
     std::cout << "Table '" << tableName << "' created\n";
 }
 
@@ -641,6 +700,9 @@ void insertInto(const std::string& body) {
     auto schema = loadSchema(tablePath);
     auto columnNames = splitByCommaTopLevel(columnsText);
 
+    StringPool pool;
+    pool.load(tablePath + "/string_pool.txt");
+
     if (columnNames.empty()) {
         std::cout << "Error: empty column list\n";
         return;
@@ -682,8 +744,6 @@ void insertInto(const std::string& body) {
     IndexManager indexManager;
     indexManager.buildIndexes(tablePath, schema);
     indexManager.saveIndexes();
-
-    auto oldRows = loadData(tablePath);
 
     std::vector<std::vector<std::string>> rowsToInsert;
     std::set<std::string> batchIndexedValues;
@@ -733,6 +793,7 @@ void insertInto(const std::string& body) {
                 }
 
                 val = val.substr(1, val.size() - 2);
+                val = "pool:" + std::to_string(pool.intern(val));
             }
 
             row[colIndex] = val;
@@ -746,8 +807,14 @@ void insertInto(const std::string& body) {
 
             if (schema[i].indexed) {
                 std::string key = schema[i].name + "|" + row[i];
-
-                if (!indexManager.checkUnique(schema[i].name, row[i])) {
+                std::string checkValue;
+                if (schema[i].type == "string" && row[i].find("pool:") == 0) {
+                    size_t id = std::stoull(row[i].substr(5));
+                    checkValue = pool.resolve(id);
+                } else {
+                    checkValue = row[i];
+                }
+                if (!indexManager.checkUnique(schema[i].name, checkValue)) {
                     std::cout << "Error: duplicate value for INDEXED column " << schema[i].name << "\n";
                     return;
                 }
@@ -764,34 +831,62 @@ void insertInto(const std::string& body) {
         rowsToInsert.push_back(row);
     }
 
-    std::ofstream out(tablePath + "/data.txt", std::ios::app);
+    auto existingRows = loadDataWithPool(tablePath, pool);
 
+    std::ofstream out(tablePath + "/data.txt");
     if (!out) {
         std::cout << "Error: failed to open data file\n";
         return;
     }
 
+    for (const auto& row : existingRows) {
+        for (size_t i = 0; i < row.size(); i++) {
+            if (i > 0) out << "|";
+            if (row[i] == "NULL") {
+                out << "NULL";
+            } else if (schema[i].type == "string") {
+                size_t id = pool.intern(row[i]);
+                out << "pool:" << id;
+            } else {
+                out << row[i];
+            }
+        }
+        out << "\n";
+    }
+
     for (size_t r = 0; r < rowsToInsert.size(); r++) {
         const auto& row = rowsToInsert[r];
-
+    
         for (size_t i = 0; i < row.size(); i++) {
-            if (i > 0) {
-                out << "|";
+            if (i > 0) out << "|";
+        
+            if (row[i] == "NULL") {
+                out << "NULL";
+            } else if (schema[i].type == "string") {
+                out << row[i];
+            } else {
+                out << row[i];
             }
-
-            out << row[i];
         }
-
         out << "\n";
-
-        size_t newRowId = oldRows.size() + r;
-
+    
+        size_t newRowId = existingRows.size() + r;
+    
         for (size_t i = 0; i < schema.size(); i++) {
             if (schema[i].indexed && row[i] != "NULL") {
-                indexManager.insertKey(schema[i].name, row[i], newRowId);
+                std::string realValue;
+                if (schema[i].type == "string" && row[i].find("pool:") == 0) {
+                    size_t id = std::stoull(row[i].substr(5));
+                    realValue = pool.resolve(id);
+                } else {
+                    realValue = row[i];
+                }
+                indexManager.insertKey(schema[i].name, realValue, newRowId);
             }
         }
     }
+
+    pool.save(tablePath + "/string_pool.txt");
 
     std::cout << rowsToInsert.size() << " row(s) inserted\n";
 }
@@ -817,7 +912,9 @@ void deleteFrom(const std::string& body) {
     }
 
     auto schema = loadSchema(tablePath);
-    auto rows = loadData(tablePath);
+    StringPool pool;
+    pool.load(tablePath + "/string_pool.txt");
+    auto rows = loadDataWithPool(tablePath, pool);
 
     Condition cond;
     std::string error;
@@ -841,23 +938,8 @@ void deleteFrom(const std::string& body) {
         }
     }
 
-    std::ofstream out(tablePath + "/data.txt");
-
-    for (const auto& row : remainingRows) {
-        for (size_t i = 0; i < row.size(); i++) {
-            if (i > 0) {
-                out << "|";
-            }
-
-            out << row[i];
-        }
-
-        out << "\n";
-    }
-
-    IndexManager indexManager;
-    indexManager.buildIndexes(tablePath, schema);
-    indexManager.saveIndexes();
+    saveDataWithPool(tablePath, remainingRows, pool, schema);
+    pool.save(tablePath + "/string_pool.txt");
 
     std::cout << deletedCount << " row(s) deleted\n";
 }
@@ -910,7 +992,9 @@ void selectFrom(const std::string& body) {
     }
 
     auto schema = loadSchema(tablePath);
-    auto rows = loadData(tablePath);
+    StringPool pool;
+    pool.load(tablePath + "/string_pool.txt");
+    auto rows = loadDataWithPool(tablePath, pool);
 
     std::vector<size_t> selectedIndexes;
     std::vector<std::string> outputNames;
@@ -985,12 +1069,15 @@ void selectFrom(const std::string& body) {
                 std::string key = cond.right;
 
                 if (colType == "string") {
-                    if (!isStringLiteral(key)) {
+                    if (key.find("pool:") == 0) {
+                        size_t id = std::stoull(key.substr(5));
+                        key = pool.resolve(id);
+                    } else if (isStringLiteral(key)) {
+                        key = key.substr(1, key.size() - 2);
+                    } else {
                         std::cout << "Error: expected string literal in WHERE\n";
                         return;
                     }
-
-                    key = key.substr(1, key.size() - 2);
                 } else if (colType == "int") {
                     if (!isIntegerValue(key)) {
                         std::cout << "Error: expected int in WHERE\n";
@@ -1011,13 +1098,25 @@ void selectFrom(const std::string& body) {
                 std::string rightKey = cond.right2;
 
                 if (colType == "string") {
-                    if (!isStringLiteral(leftKey) || !isStringLiteral(rightKey)) {
-                        std::cout << "Error: BETWEEN requires string bounds\n";
+                    if (leftKey.find("pool:") == 0) {
+                        size_t id = std::stoull(leftKey.substr(5));
+                        leftKey = pool.resolve(id);
+                    } else if (isStringLiteral(leftKey)) {
+                        leftKey = leftKey.substr(1, leftKey.size() - 2);
+                    } else {
+                        std::cout << "Error: expected string literal in BETWEEN\n";
                         return;
                     }
-
-                    leftKey = leftKey.substr(1, leftKey.size() - 2);
-                    rightKey = rightKey.substr(1, rightKey.size() - 2);
+                    
+                    if (rightKey.find("pool:") == 0) {
+                        size_t id = std::stoull(rightKey.substr(5));
+                        rightKey = pool.resolve(id);
+                    } else if (isStringLiteral(rightKey)) {
+                        rightKey = rightKey.substr(1, rightKey.size() - 2);
+                    } else {
+                        std::cout << "Error: expected string literal in BETWEEN\n";
+                        return;
+                    }
                 } else if (colType == "int") {
                     if (!isIntegerValue(leftKey) || !isIntegerValue(rightKey)) {
                         std::cout << "Error: BETWEEN requires int bounds\n";
@@ -1113,7 +1212,14 @@ void selectFrom(const std::string& body) {
             } else if (schema[j].type == "int") {
                 std::cout << val;
             } else {
-                std::cout << "\"" << val << "\"";
+                std::string realValue;
+                if (val.find("pool:") == 0) {
+                    size_t id = std::stoull(val.substr(5));
+                    realValue = pool.resolve(id);
+                } else {
+                    realValue = val;
+                }
+                std::cout << "\"" << realValue << "\"";
             }
 
             if (k + 1 < selectedIndexes.size()) {
@@ -1164,7 +1270,9 @@ void updateRows(const std::string& body) {
     }
 
     auto schema = loadSchema(tablePath);
-    auto rows = loadData(tablePath);
+    StringPool pool;
+    pool.load(tablePath + "/string_pool.txt");
+    auto rows = loadDataWithPool(tablePath, pool);
 
     auto assignments = splitByCommaTopLevel(setPart);
 
@@ -1206,6 +1314,7 @@ void updateRows(const std::string& body) {
             }
 
             value = value.substr(1, value.size() - 2);
+            value = "pool:" + std::to_string(pool.intern(value));
         }
 
         setIndexes.push_back(idx);
@@ -1266,28 +1375,8 @@ void updateRows(const std::string& body) {
         }
     }
 
-    std::ofstream out(tablePath + "/data.txt");
-
-    if (!out) {
-        std::cout << "Error: failed to rewrite data file\n";
-        return;
-    }
-
-    for (const auto& row : newRows) {
-        for (size_t i = 0; i < row.size(); i++) {
-            if (i > 0) {
-                out << "|";
-            }
-
-            out << row[i];
-        }
-
-        out << "\n";
-    }
-
-    IndexManager indexManager;
-    indexManager.buildIndexes(tablePath, schema);
-    indexManager.saveIndexes();
+    saveDataWithPool(tablePath, newRows, pool, schema);
+    pool.save(tablePath + "/string_pool.txt");
 
     std::cout << updatedCount << " row(s) updated\n";
 }

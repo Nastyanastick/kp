@@ -1,2 +1,5 @@
-CREATE DATABASE db1;
-USE db1;
+CREATE DATABASE test_db;
+USE test_db;
+CREATE TABLE users (id int, name string, city string);
+INSERT INTO users (id, name, city) VALUE (1, "Alice", "Moscow"), (2, "Bob", "Moscow"), (3, "Alice", "SPB"), (4, "Charlie", "Moscow");
+SELECT * FROM users;
