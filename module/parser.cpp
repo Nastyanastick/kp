@@ -164,4 +164,32 @@ void runBatch(const std::string& filename) {
     }
 }
 
+std::string executeSQLForServer(const std::string& sql) {
+    std::ostringstream output;
 
+    std::streambuf* oldCout = std::cout.rdbuf(output.rdbuf());
+    std::streambuf* oldCerr = std::cerr.rdbuf(output.rdbuf());
+
+    try {
+        auto commands = splitCommands(sql);
+
+        for (const auto& cmd : commands) {
+            processCommand(cmd);
+        }
+    } catch (const std::exception& e) {
+        std::cout << "Error: " << e.what() << "\n";
+    } catch (...) {
+        std::cout << "Error: unknown error\n";
+    }
+
+    std::cout.rdbuf(oldCout);
+    std::cerr.rdbuf(oldCerr);
+
+    std::string result = output.str();
+
+    if (result.empty()) {
+        result = "OK\n";
+    }
+
+    return result;
+}

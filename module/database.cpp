@@ -5,6 +5,7 @@
 #include <direct.h>
 #include <io.h>
 #include <cstdlib>
+#include <sstream>
 
 const std::string DATA_DIR = "data";
 std::string currentDatabase;
