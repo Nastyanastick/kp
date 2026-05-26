@@ -5,9 +5,6 @@
 std::string trim(const std::string& s);
 std::string toUpper(const std::string& s);
 bool isValidName(const std::string& name);
-
-std::vector<std::string> splitCommands(const std::string& text);
-
 void processCommand(const std::string& command);
 void runInteractive();
 void runBatch(const std::string& filename);

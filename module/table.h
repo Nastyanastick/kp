@@ -29,15 +29,15 @@ struct Table {
     std::vector<Row> rows;
 };
 
-void createTable(const std::string& body);
 void dropTable(const std::string& tableName);
-void insertInto(const std::string& body);
-void selectFrom(const std::string& body);
-void deleteFrom(const std::string& body);
-void updateRows(const std::string& body);
 
-bool parseColumnDefinition(const std::string& text, Column& column, std::string& error);
-bool parseCondition(const std::string& text, Condition& cond, std::string& error);
+namespace sql { struct CreateTableCmd; struct InsertCmd; struct SelectCmd; struct UpdateCmd; struct DeleteCmd; }
+
+void createTableFromAST(const sql::CreateTableCmd& cmd);
+void insertFromAST(const sql::InsertCmd& cmd);
+void selectFromAST(const sql::SelectCmd& cmd);
+void updateFromAST(const sql::UpdateCmd& cmd);
+void deleteFromAST(const sql::DeleteCmd& cmd);
 
 std::vector<std::string> splitByCommaTopLevel(const std::string& text);
 std::vector<std::string> splitValues(const std::string& text);

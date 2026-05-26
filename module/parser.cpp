@@ -1,6 +1,8 @@
 #include "parser.h"
 #include "database.h"
 #include "table.h"
+#include "sql_parser.h"
+#include "sql_ast.h"
 #include <iostream>
 #include <fstream>
 #include <sstream>
@@ -30,55 +32,6 @@ std::string toUpper(const std::string& s) {
     return result;
 }
 
-bool isValidKeywordCase(const std::string& word) {
-    if (word.empty()) {
-        return false;
-    }
-
-    bool hasLower = false;
-    bool hasUpper = false;
-
-    for (char ch : word) {
-        if (std::isalpha(static_cast<unsigned char>(ch))) {
-            if (std::islower(static_cast<unsigned char>(ch))) {
-                hasLower = true;
-            }
-            if (std::isupper(static_cast<unsigned char>(ch))) {
-                hasUpper = true;
-            }
-        }
-    }
-
-    return !(hasLower && hasUpper);
-}
-
-bool checkKeywordCases(const std::string& command) {
-    std::istringstream iss(command);
-    std::string word;
-
-    while (iss >> word) {
-        while (!word.empty() && (word.back() == '(' || word.back() == ',' || word.back() == ';')) {
-            word.pop_back();
-        }
-
-        std::string upper = toUpper(word);
-
-        if (upper == "CREATE" || upper == "DATABASE" || upper == "DROP" ||
-            upper == "USE" || upper == "TABLE" || upper == "INSERT" ||
-            upper == "INTO" || upper == "VALUE" || upper == "VALUES" ||
-            upper == "SELECT" || upper == "FROM" || upper == "WHERE" ||
-            upper == "UPDATE" || upper == "SET" || upper == "DELETE" ||
-            upper == "AS" || upper == "BETWEEN" || upper == "AND" ||
-            upper == "LIKE" || upper == "NOT_NULL" || upper == "INDEXED") {
-
-            if (!isValidKeywordCase(word)) {
-                return false;
-            }
-        }
-    }
-
-    return true;
-}
 
 
 
@@ -122,73 +75,75 @@ void processCommand(const std::string& command) {
         return;
     }
 
-    if (cleaned.back() == ';') {
-        cleaned.pop_back();
-        cleaned = trim(cleaned);
-    }
-
-    if (!checkKeywordCases(cleaned)) {
-        std::cout << "Error: invalid keyword case\n";
+    std::vector<sql::Command> cmds;
+    if (!parse_sql(cleaned, cmds)) {
+        std::cout << "Error: parse failed\n";
         return;
     }
 
-    std::string upper = toUpper(cleaned);
-
-    if (upper.rfind("CREATE DATABASE ", 0) == 0) {
-        std::string dbName = trim(cleaned.substr(16));
-        createDatabase(dbName);
-    } else if (upper.rfind("DROP DATABASE ", 0) == 0) {
-        std::string dbName = trim(cleaned.substr(14));
-        dropDatabase(dbName);
-    } else if (upper.rfind("USE ", 0) == 0) {
-        std::string dbName = trim(cleaned.substr(4));
-        useDatabase(dbName);
-    } else if (upper.rfind("CREATE TABLE ", 0) == 0) {
-        std::string body = trim(cleaned.substr(13));
-        createTable(body);
-    } else if (upper.rfind("DROP TABLE ", 0) == 0) {
-        std::string tableName = trim(cleaned.substr(11));
-        dropTable(tableName);
-    } else if (upper.rfind("INSERT INTO ", 0) == 0) {
-        std::string body = trim(cleaned.substr(12));
-        insertInto(body);
-    } else if (upper.rfind("SELECT ", 0) == 0) {
-        std::string body = trim(cleaned.substr(7));
-        selectFrom(body);
-    } else if (upper.rfind("UPDATE ", 0) == 0) {
-        std::string body = trim(cleaned.substr(7));
-        updateRows(body);
-    } else if (upper.rfind("DELETE FROM ", 0) == 0) {
-        std::string body = trim(cleaned.substr(12));
-        deleteFrom(body);
-    } else {
-        std::cout << "Error: unknown command\n";
+    for (auto &c : cmds) {
+        switch (c.type) {
+            case sql::CmdType::CREATE_DATABASE:
+                createDatabase(c.dbName);
+                break;
+            case sql::CmdType::DROP_DATABASE:
+                dropDatabase(c.dbName);
+                break;
+            case sql::CmdType::USE_DATABASE:
+                useDatabase(c.dbName);
+                break;
+            case sql::CmdType::CREATE_TABLE:
+                createTableFromAST(c.createTable);
+                break;
+            case sql::CmdType::DROP_TABLE:
+                dropTable(c.dropTableName);
+                break;
+            case sql::CmdType::INSERT:
+                insertFromAST(c.insert);
+                break;
+            case sql::CmdType::SELECT:
+                selectFromAST(c.select);
+                break;
+            case sql::CmdType::UPDATE:
+                updateFromAST(c.update);
+                break;
+            case sql::CmdType::DELETE:
+                deleteFromAST(c.del);
+                break;
+        }
     }
 }
 
 void runInteractive() {
     std::cout << "Interactive mode. Enter commands ending with ';'\n";
+    std::cout << "Type EXIT; to quit\n";
 
     std::string line;
     std::string buffer;
 
     while (true) {
+        std::cout << "> ";
+
         std::getline(std::cin, line);
         if (!std::cin) {
             break;
         }
 
-        buffer += line + '\n';
-
-        auto commands = splitCommands(buffer);
-
-        size_t processedLength = 0;
-        for (const auto& cmd : commands) {
-            processCommand(cmd);
-            processedLength += cmd.size();
+        if (line == "EXIT;" || line == "exit;") {
+            break;
         }
 
-        buffer = buffer.substr(processedLength);
+        buffer += line + '\n';
+
+        if (buffer.find(';') != std::string::npos) {
+            auto commands = splitCommands(buffer);
+
+            for (const auto& cmd : commands) {
+                processCommand(cmd);
+            }
+
+            buffer.clear();
+        }
     }
 }
 
@@ -208,3 +163,5 @@ void runBatch(const std::string& filename) {
         processCommand(cmd);
     }
 }
+
+
