@@ -41,7 +41,7 @@ extern int yydebug;
 #endif
 /* "%code requires" blocks.  */
 /* Line 2058 of yacc.c  */
-#line 70 "module/sql_parser.y"
+#line 71 "module/sql_parser.y"
 
 #include "table.h"
 #include "sql_ast.h"
@@ -77,14 +77,17 @@ extern int yydebug;
      AS = 276,
      BETWEEN = 277,
      LIKE = 278,
-     AND = 279,
-     OR = 280,
-     EQ = 281,
-     NEQ = 282,
-     LE = 283,
-     GE = 284,
-     LT = 285,
-     GT = 286
+     SUM = 279,
+     COUNT = 280,
+     AVG = 281,
+     AND = 282,
+     OR = 283,
+     EQ = 284,
+     NEQ = 285,
+     LE = 286,
+     GE = 287,
+     LT = 288,
+     GT = 289
    };
 #endif
 
@@ -93,14 +96,14 @@ extern int yydebug;
 typedef union YYSTYPE
 {
 /* Line 2058 of yacc.c  */
-#line 75 "module/sql_parser.y"
+#line 76 "module/sql_parser.y"
 
     char* str;
     ConditionNode* cond;
 
 
 /* Line 2058 of yacc.c  */
-#line 104 "module/sql_parser.tab.hpp"
+#line 107 "module/sql_parser.tab.hpp"
 } YYSTYPE;
 # define YYSTYPE_IS_TRIVIAL 1
 # define yystype YYSTYPE /* obsolescent; will be withdrawn */

@@ -12,7 +12,7 @@ static char* strdupcanon(const char* s) {
 }
 %}
 
-%option noyywrap
+%option noyywrap nounput noinput
 
 DIGIT      [0-9]
 ID         [A-Za-z_][A-Za-z0-9_]*
@@ -54,6 +54,9 @@ STRINGCHAR [^\"]*
 "LIKE"|"like"          { return LIKE; }
 "AND"|"and"            { return AND; }
 "OR"|"or"              { return OR; }
+"SUM"|"sum"            { return SUM; }
+"COUNT"|"count"        { return COUNT; }
+"AVG"|"avg"            { return AVG; }
 "NULL"|"null"          { return NULL_TOKEN; }
 
 {ID}                    { yylval.str = strdupcanon(yytext); return IDENTIFIER; }

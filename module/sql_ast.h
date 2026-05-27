@@ -58,8 +58,13 @@ struct InsertCmd {
 
 struct SelectColumn {
     bool all = false;
+    bool aggregate = false;
+
     std::string name;
     std::string alias;
+
+    std::string aggFunc; 
+    std::string aggArg; 
 };
 
 struct SelectCmd {

@@ -53,6 +53,7 @@ void sql_push_insert_finalize();
 void sql_push_select_start();
 void sql_select_add_all();
 void sql_select_add_column(const char* name, const char* alias);
+void sql_select_add_aggregate(const char* func, const char* arg, const char* alias);
 void sql_select_set_table(const char* name);
 void sql_select_set_where(ConditionNode* cond);
 void sql_push_select_finalize();
@@ -83,6 +84,7 @@ void sql_push_delete_finalize();
 %token NULL_TOKEN
 
 %token CREATE DROP DATABASE USE TABLE INSERT INTO VALUES SELECT FROM WHERE UPDATE SET DELETE AS BETWEEN LIKE
+%token SUM COUNT AVG
 %token AND OR
 
 %token EQ NEQ LE GE LT GT
@@ -258,6 +260,30 @@ select_item:
 
   | IDENTIFIER AS IDENTIFIER
         { sql_select_add_column($1, $3); free($1); free($3); }
+
+  | SUM '(' IDENTIFIER ')'
+        { sql_select_add_aggregate("SUM", $3, nullptr); free($3); }
+
+  | SUM '(' IDENTIFIER ')' AS IDENTIFIER
+        { sql_select_add_aggregate("SUM", $3, $6); free($3); free($6); }
+
+  | COUNT '(' '*' ')'
+        { sql_select_add_aggregate("COUNT", "*", nullptr); }
+
+  | COUNT '(' '*' ')' AS IDENTIFIER
+        { sql_select_add_aggregate("COUNT", "*", $6); free($6); }
+
+  | COUNT '(' IDENTIFIER ')'
+        { sql_select_add_aggregate("COUNT", $3, nullptr); free($3); }
+
+  | COUNT '(' IDENTIFIER ')' AS IDENTIFIER
+        { sql_select_add_aggregate("COUNT", $3, $6); free($3); free($6); }
+
+  | AVG '(' IDENTIFIER ')'
+        { sql_select_add_aggregate("AVG", $3, nullptr); free($3); }
+
+  | AVG '(' IDENTIFIER ')' AS IDENTIFIER
+        { sql_select_add_aggregate("AVG", $3, $6); free($3); free($6); }
   ;
 
 select_where:
@@ -507,6 +533,16 @@ void sql_select_add_column(const char* name, const char* alias) {
     sql::SelectColumn col;
     col.all = false;
     col.name = name;
+    col.alias = alias ? alias : "";
+    currentSelect.columns.push_back(col);
+}
+
+void sql_select_add_aggregate(const char* func, const char* arg, const char* alias) {
+    sql::SelectColumn col;
+    col.all = false;
+    col.aggregate = true;
+    col.aggFunc = func ? func : "";
+    col.aggArg = arg ? arg : "";
     col.alias = alias ? alias : "";
     currentSelect.columns.push_back(col);
 }

@@ -795,31 +795,13 @@ void selectFromAST(const sql::SelectCmd& cmd) {
     StringPool pool; pool.load(tablePath + "/string_pool.txt");
     auto rows = loadDataWithPool(tablePath, pool);
 
-    std::vector<size_t> selectedIndexes;
-    std::vector<std::string> outputNames;
-
-    if (!cmd.columns.empty() && cmd.columns[0].all) {
-        for (size_t i = 0; i < schema.size(); i++) { selectedIndexes.push_back(i); outputNames.push_back(schema[i].name); }
-    } else {
-        for (const auto& sc : cmd.columns) {
-            std::string columnName = sc.name;
-            std::string alias = sc.alias.empty() ? sc.name : sc.alias;
-            if (!isValidName(alias)) { std::cout << "Error: invalid alias name: " << alias << "\n"; return; }
-            bool found = false;
-            for (size_t i = 0; i < schema.size(); i++) {
-                if (schema[i].name == columnName) { selectedIndexes.push_back(i); outputNames.push_back(alias); found = true; break; }
-            }
-            if (!found) { std::cout << "Error: unknown column in SELECT: " << columnName << "\n"; return; }
-        }
-    }
-
-    IndexManager indexManager; 
-    indexManager.buildIndexes(tablePath, schema); 
+    IndexManager indexManager;
+    indexManager.buildIndexes(tablePath, schema);
     indexManager.saveIndexes();
 
-    bool useIndex = false; 
+    bool useIndex = false;
     std::set<size_t> indexedRowIds;
-    
+
     const ConditionNode* whereCond = (const ConditionNode*)cmd.where;
 
     if (whereCond && whereCond->type == ConditionNode::COMPARISON) {
@@ -833,39 +815,201 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
         if (indexedColumn != -1 && indexManager.hasIndex(whereCond->left) && whereCond->op != "LIKE") {
             std::string colName = whereCond->left;
-            std::string colType = schema[indexedColumn].type;
 
             if (whereCond->op == "==") {
                 std::string key = whereCond->right;
-                size_t rowId; 
+                size_t rowId;
                 if (indexManager.findRowId(colName, key, rowId)) {
                     indexedRowIds.insert(rowId);
                 }
                 useIndex = true;
             } else if (whereCond->op == "BETWEEN") {
-                std::string leftKey = whereCond->right; 
-                std::string rightKey = whereCond->right2;
-                auto ids = indexManager.findRange(colName, leftKey, rightKey);
-                indexedRowIds.insert(ids.begin(), ids.end()); 
+                auto ids = indexManager.findRange(colName, whereCond->right, whereCond->right2);
+                indexedRowIds.insert(ids.begin(), ids.end());
                 useIndex = true;
             } else if (whereCond->op == ">" || whereCond->op == ">=" || whereCond->op == "<" || whereCond->op == "<=") {
                 std::string bound = whereCond->right;
                 std::string leftKey, rightKey;
+
                 if (schema[indexedColumn].type == "int") {
                     leftKey = std::to_string(std::numeric_limits<int>::min());
                     rightKey = std::to_string(std::numeric_limits<int>::max());
-                } else { 
-                    leftKey = ""; 
-                    rightKey = std::string(100, char(127)); 
+                } else {
+                    leftKey = "";
+                    rightKey = std::string(100, char(127));
                 }
+
                 if (whereCond->op == ">" || whereCond->op == ">=") {
                     leftKey = bound;
                 } else {
                     rightKey = bound;
                 }
+
                 auto ids = indexManager.findRange(colName, leftKey, rightKey);
-                indexedRowIds.insert(ids.begin(), ids.end()); 
+                indexedRowIds.insert(ids.begin(), ids.end());
                 useIndex = true;
+            }
+        }
+    }
+
+    bool hasAggregate = false;
+    for (const auto& sc : cmd.columns) {
+        if (sc.aggregate) {
+            hasAggregate = true;
+            break;
+        }
+    }
+
+    if (hasAggregate) {
+        std::vector<std::string> outputNames;
+        std::vector<long long> sums;
+        std::vector<int> counts;
+
+        for (const auto& sc : cmd.columns) {
+            if (!sc.aggregate) {
+                std::cout << "Error: cannot mix aggregate and regular columns\n";
+                return;
+            }
+
+            std::string outName = sc.alias.empty()
+                ? sc.aggFunc + "(" + sc.aggArg + ")"
+                : sc.alias;
+
+            if (!isValidName(outName) && sc.alias.empty() == false) {
+                std::cout << "Error: invalid alias name: " << outName << "\n";
+                return;
+            }
+
+            outputNames.push_back(outName);
+            sums.push_back(0);
+            counts.push_back(0);
+        }
+
+        for (size_t rowIndex = 0; rowIndex < rows.size(); rowIndex++) {
+            if (useIndex && indexedRowIds.count(rowIndex) == 0) {
+                continue;
+            }
+
+            const auto& row = rows[rowIndex];
+
+            if (whereCond) {
+                std::string error;
+                bool matched = rowMatchesCondition(row, schema, whereCond, error);
+
+                if (!error.empty()) {
+                    std::cout << "Error: " << error << "\n";
+                    return;
+                }
+
+                if (!matched) {
+                    continue;
+                }
+            }
+
+            for (size_t a = 0; a < cmd.columns.size(); a++) {
+                const auto& sc = cmd.columns[a];
+
+                if (sc.aggFunc == "COUNT" && sc.aggArg == "*") {
+                    counts[a]++;
+                    continue;
+                }
+
+                int colIndex = -1;
+                for (size_t i = 0; i < schema.size(); i++) {
+                    if (schema[i].name == sc.aggArg) {
+                        colIndex = static_cast<int>(i);
+                        break;
+                    }
+                }
+
+                if (colIndex == -1) {
+                    std::cout << "Error: unknown column in aggregate: " << sc.aggArg << "\n";
+                    return;
+                }
+
+                std::string val = row[colIndex];
+                if (val == "NULL") {
+                    continue;
+                }
+
+                if (sc.aggFunc == "COUNT") {
+                    counts[a]++;
+                } else if (sc.aggFunc == "SUM" || sc.aggFunc == "AVG") {
+                    if (schema[colIndex].type != "int") {
+                        std::cout << "Error: " << sc.aggFunc << " works only with int columns\n";
+                        return;
+                    }
+
+                    sums[a] += std::stoll(val);
+                    counts[a]++;
+                } else {
+                    std::cout << "Error: unknown aggregate function: " << sc.aggFunc << "\n";
+                    return;
+                }
+            }
+        }
+
+        std::cout << "[\n";
+        std::cout << "  {";
+
+        for (size_t a = 0; a < cmd.columns.size(); a++) {
+            if (a > 0) {
+                std::cout << ", ";
+            }
+
+            const auto& sc = cmd.columns[a];
+            std::cout << "\"" << outputNames[a] << "\": ";
+
+            if (sc.aggFunc == "COUNT") {
+                std::cout << counts[a];
+            } else if (sc.aggFunc == "SUM") {
+                std::cout << sums[a];
+            } else if (sc.aggFunc == "AVG") {
+                if (counts[a] == 0) {
+                    std::cout << "null";
+                } else {
+                    double avg = static_cast<double>(sums[a]) / counts[a];
+                    std::cout << avg;
+                }
+            }
+        }
+
+        std::cout << "}\n";
+        std::cout << "]\n";
+        return;
+    }
+
+    std::vector<size_t> selectedIndexes;
+    std::vector<std::string> outputNames;
+
+    if (!cmd.columns.empty() && cmd.columns[0].all) {
+        for (size_t i = 0; i < schema.size(); i++) {
+            selectedIndexes.push_back(i);
+            outputNames.push_back(schema[i].name);
+        }
+    } else {
+        for (const auto& sc : cmd.columns) {
+            std::string columnName = sc.name;
+            std::string alias = sc.alias.empty() ? sc.name : sc.alias;
+
+            if (!isValidName(alias)) {
+                std::cout << "Error: invalid alias name: " << alias << "\n";
+                return;
+            }
+
+            bool found = false;
+            for (size_t i = 0; i < schema.size(); i++) {
+                if (schema[i].name == columnName) {
+                    selectedIndexes.push_back(i);
+                    outputNames.push_back(alias);
+                    found = true;
+                    break;
+                }
+            }
+
+            if (!found) {
+                std::cout << "Error: unknown column in SELECT: " << columnName << "\n";
+                return;
             }
         }
     }
@@ -878,11 +1022,11 @@ void selectFromAST(const sql::SelectCmd& cmd) {
         const auto& row = rows[rowIndex];
 
         if (whereCond) {
-            std::string error; 
+            std::string error;
             bool matched = rowMatchesCondition(row, schema, whereCond, error);
-            if (!error.empty()) { 
-                std::cout << "Error: " << error << "\n"; 
-                return; 
+            if (!error.empty()) {
+                std::cout << "Error: " << error << "\n";
+                return;
             }
             if (!matched) continue;
         }
@@ -894,19 +1038,19 @@ void selectFromAST(const sql::SelectCmd& cmd) {
             size_t j = selectedIndexes[k];
             std::cout << "\"" << outputNames[k] << "\": ";
             std::string val = (j < row.size()) ? row[j] : "NULL";
-            if (val == "NULL") { 
-                std::cout << "null"; 
-            } else if (schema[j].type == "int") { 
-                std::cout << val; 
-            } else { 
-                std::string realValue; 
-                if (val.find("pool:") == 0) { 
-                    size_t id = std::stoull(val.substr(5)); 
-                    realValue = pool.resolve(id); 
+            if (val == "NULL") {
+                std::cout << "null";
+            } else if (schema[j].type == "int") {
+                std::cout << val;
+            } else {
+                std::string realValue;
+                if (val.find("pool:") == 0) {
+                    size_t id = std::stoull(val.substr(5));
+                    realValue = pool.resolve(id);
                 } else {
-                    realValue = val; 
+                    realValue = val;
                 }
-                std::cout << "\"" << realValue << "\""; 
+                std::cout << "\"" << realValue << "\"";
             }
             if (k + 1 < selectedIndexes.size()) std::cout << ", ";
         }
