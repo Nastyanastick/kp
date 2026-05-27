@@ -60,13 +60,17 @@ int main() {
 
         send(clientSocket, buffer.c_str(), (int)buffer.size(), 0);
 
-        char response[16384];
-        int bytesReceived = recv(clientSocket, response, sizeof(response) - 1, 0);
+        char response[4096];
+        int bytesReceived;
+        bool gotResponse = false;
 
-        if (bytesReceived > 0) {
+        while ((bytesReceived = recv(clientSocket, response, sizeof(response) - 1, 0)) > 0) {
             response[bytesReceived] = '\0';
             std::cout << response;
-        } else {
+            gotResponse = true;
+        }
+
+        if (!gotResponse) {
             std::cout << "Error: empty response from server\n";
         }
 

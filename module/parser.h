@@ -2,6 +2,7 @@
 #include <string>
 #include <vector>
 
+std::string executeSQLForServer(const std::string& sql);
 std::string trim(const std::string& s);
 std::string toUpper(const std::string& s);
 std::vector<std::string> splitCommands(const std::string& text);
