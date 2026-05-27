@@ -30,8 +30,8 @@
    This special exception was added by the Free Software Foundation in
    version 2.2 of Bison.  */
 
-#ifndef YY_YY_MODULE_SQL_PARSER_TAB_HPP_INCLUDED
-# define YY_YY_MODULE_SQL_PARSER_TAB_HPP_INCLUDED
+#ifndef YY_YY_SQL_PARSER_TAB_H_INCLUDED
+# define YY_YY_SQL_PARSER_TAB_H_INCLUDED
 /* Enabling traces.  */
 #ifndef YYDEBUG
 # define YYDEBUG 0
@@ -41,14 +41,13 @@ extern int yydebug;
 #endif
 /* "%code requires" blocks.  */
 /* Line 2058 of yacc.c  */
-#line 70 "module/sql_parser.y"
+#line 21 "sql_parser.y"
 
 #include "table.h"
-#include "sql_ast.h"
 
 
 /* Line 2058 of yacc.c  */
-#line 52 "module/sql_parser.tab.hpp"
+#line 51 "sql_parser.tab.h"
 
 /* Tokens.  */
 #ifndef YYTOKENTYPE
@@ -68,23 +67,25 @@ extern int yydebug;
      INSERT = 267,
      INTO = 268,
      VALUES = 269,
-     SELECT = 270,
-     FROM = 271,
-     WHERE = 272,
-     UPDATE = 273,
-     SET = 274,
-     DELETE = 275,
-     AS = 276,
-     BETWEEN = 277,
-     LIKE = 278,
-     AND = 279,
-     OR = 280,
-     EQ = 281,
-     NEQ = 282,
-     LE = 283,
-     GE = 284,
-     LT = 285,
-     GT = 286
+     VALUE = 270,
+     SELECT = 271,
+     FROM = 272,
+     WHERE = 273,
+     UPDATE = 274,
+     SET = 275,
+     DELETE = 276,
+     AS = 277,
+     BETWEEN = 278,
+     LIKE = 279,
+     AND = 280,
+     OR = 281,
+     EQ = 282,
+     NEQ = 283,
+     LE = 284,
+     GE = 285,
+     LT = 286,
+     GT = 287,
+     NOT = 288
    };
 #endif
 
@@ -93,14 +94,14 @@ extern int yydebug;
 typedef union YYSTYPE
 {
 /* Line 2058 of yacc.c  */
-#line 75 "module/sql_parser.y"
+#line 25 "sql_parser.y"
 
     char* str;
     ConditionNode* cond;
 
 
 /* Line 2058 of yacc.c  */
-#line 104 "module/sql_parser.tab.hpp"
+#line 105 "sql_parser.tab.h"
 } YYSTYPE;
 # define YYSTYPE_IS_TRIVIAL 1
 # define yystype YYSTYPE /* obsolescent; will be withdrawn */
@@ -123,4 +124,4 @@ int yyparse ();
 #endif
 #endif /* ! YYPARSE_PARAM */
 
-#endif /* !YY_YY_MODULE_SQL_PARSER_TAB_HPP_INCLUDED  */
+#endif /* !YY_YY_SQL_PARSER_TAB_H_INCLUDED  */

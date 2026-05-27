@@ -3,6 +3,34 @@
 #include <vector>
 #include "table.h"
 
+struct ConditionNode {
+    enum Type {
+        COMPARISON,  
+        AND,        
+        OR         
+    };
+    
+    Type type;
+    std::string left;
+    std::string op;
+    std::string right;
+    std::string right2;  
+    ConditionNode* leftChild = nullptr;
+    ConditionNode* rightChild = nullptr;
+    
+    ConditionNode() = default;
+    explicit ConditionNode(Type t) : type(t) {}
+    ConditionNode(const std::string& l, const std::string& o, 
+                  const std::string& r, const std::string& r2 = "")
+        : type(COMPARISON), left(l), op(o), right(r), right2(r2) {}
+    ~ConditionNode() {
+        delete leftChild;
+        delete rightChild;
+    }
+    ConditionNode(const ConditionNode&) = delete;
+    ConditionNode& operator=(const ConditionNode&) = delete;
+};
+
 namespace sql {
 
 enum class CmdType {
@@ -37,26 +65,22 @@ struct SelectColumn {
 struct SelectCmd {
     std::vector<SelectColumn> columns;
     std::string tableName;
-    Condition where;
-    bool hasWhere = false;
+    ::ConditionNode* where = nullptr;
 };
 
 struct UpdateCmd {
     std::string tableName;
     std::vector<std::pair<std::string, std::string>> assignments;
-    Condition where;
-    bool hasWhere = false;
+    ::ConditionNode* where = nullptr;
 };
 
 struct DeleteCmd {
     std::string tableName;
-    Condition where;
-    bool hasWhere = false;
+    ::ConditionNode* where = nullptr;
 };
 
 struct Command {
     CmdType type;
-
     std::string dbName;
     CreateTableCmd createTable;
     std::string dropTableName;

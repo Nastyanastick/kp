@@ -36,7 +36,6 @@ std::string makePath(const std::string& a, const std::string& b) {
     if (a.empty()) {
         return b;
     }
-
     return a + "/" + b;
 }
 
@@ -47,7 +46,6 @@ std::string resolveTablePath(const std::string& tableName) {
         if (currentDatabase.empty()) {
             return "";
         }
-
         return DATA_DIR + "/" + currentDatabase + "/" + tableName;
     }
 
@@ -63,14 +61,11 @@ std::string resolveTablePath(const std::string& tableName) {
 
 std::string getPureTableName(const std::string& tableName) {
     size_t dotPos = tableName.find('.');
-
     if (dotPos == std::string::npos) {
         return tableName;
     }
-
     return trim(tableName.substr(dotPos + 1));
 }
-
 
 bool compareValues(const std::string& left, const std::string& op, const std::string& right, const std::string& type) {
     if (left == "NULL") {
@@ -101,6 +96,7 @@ bool compareValues(const std::string& left, const std::string& op, const std::st
 
     return false;
 }
+
 bool isIntegerValue(const std::string& value);
 
 bool isStringLiteral(const std::string& s) {
@@ -115,7 +111,6 @@ bool getOperandValue(
     std::string& type,
     std::string& error
 ) {
-    // ищем колонку
     for (size_t i = 0; i < schema.size(); i++) {
         if (schema[i].name == operand) {
             value = row[i];
@@ -124,14 +119,12 @@ bool getOperandValue(
         }
     }
 
-    // int константа
     if (isIntegerValue(operand)) {
         value = operand;
         type = "int";
         return true;
     }
 
-    // string константа
     if (isStringLiteral(operand)) {
         value = operand.substr(1, operand.size() - 2);
         type = "string";
@@ -142,62 +135,85 @@ bool getOperandValue(
     return false;
 }
 
-bool rowMatchesCondition(
+bool evaluateComparison(
     const std::vector<std::string>& row,
     const std::vector<Column>& schema,
-    const Condition& cond,
+    const ConditionNode& cond,
+    std::string& error
+);
+
+bool evaluateConditionTree(
+    const std::vector<std::string>& row,
+    const std::vector<Column>& schema,
+    const ConditionNode* node,
     std::string& error
 ) {
-    std::string leftValue;
-    std::string leftType;
+    if (!node) {
+        return true;  
+    }
+    
+    switch (node->type) {
+        case ConditionNode::AND:
+            return evaluateConditionTree(row, schema, node->leftChild, error) &&
+                   evaluateConditionTree(row, schema, node->rightChild, error);
+        
+        case ConditionNode::OR:
+            return evaluateConditionTree(row, schema, node->leftChild, error) ||
+                   evaluateConditionTree(row, schema, node->rightChild, error);
+        
+        case ConditionNode::COMPARISON:
+            return evaluateComparison(row, schema, *node, error);
+        
+        default:
+            error = "Unknown condition type";
+            return false;
+    }
+}
 
+bool evaluateComparison(
+    const std::vector<std::string>& row,
+    const std::vector<Column>& schema,
+    const ConditionNode& cond,
+    std::string& error
+) {
+    std::string leftValue, leftType;
     if (!getOperandValue(cond.left, row, schema, leftValue, leftType, error)) {
         return false;
     }
-
+    
     if (cond.op == "BETWEEN") {
         if (leftType == "int") {
             if (!isIntegerValue(cond.right) || !isIntegerValue(cond.right2)) {
                 error = "BETWEEN requires int bounds";
                 return false;
             }
-
             int value = std::stoi(leftValue);
             int l = std::stoi(cond.right);
             int r = std::stoi(cond.right2);
-
             return value >= l && value < r;
         }
-
         if (leftType == "string") {
-            if (!isStringLiteral(cond.right) ||
-                !isStringLiteral(cond.right2)) {
+            if (!isStringLiteral(cond.right) || !isStringLiteral(cond.right2)) {
                 error = "BETWEEN requires string bounds";
                 return false;
             }
-
-            std::string l =
-                cond.right.substr(1, cond.right.size() - 2);
-
-            std::string r =
-                cond.right2.substr(1, cond.right2.size() - 2);
-
+            std::string l = cond.right.substr(1, cond.right.size() - 2);
+            std::string r = cond.right2.substr(1, cond.right2.size() - 2);
             return leftValue >= l && leftValue < r;
         }
+        error = "BETWEEN on unsupported type";
+        return false;
     }
-
+    
     if (cond.op == "LIKE") {
         if (leftType != "string") {
             error = "LIKE works only with strings";
             return false;
         }
-
         std::string pattern = cond.right;
-
         if (isStringLiteral(pattern)) {
             pattern = pattern.substr(1, pattern.size() - 2);
         }
-
         std::string regexPattern;
         for (char ch : pattern) {
             if (ch == '%') {
@@ -205,40 +221,40 @@ bool rowMatchesCondition(
             } else if (ch == '_') {
                 regexPattern += ".";
             } else {
-                if (ch == '.' || ch == '^' || ch == '$' || ch == '|' ||
-                    ch == '(' || ch == ')' || ch == '[' || ch == ']' ||
-                    ch == '{' || ch == '}' || ch == '*' || ch == '+' ||
-                    ch == '?' || ch == '\\') {
+                if (strchr(".[]{}()\\*+?|^$", ch)) {
                     regexPattern += '\\';
                 }
                 regexPattern += ch;
             }
         }
-
         try {
             return std::regex_match(leftValue, std::regex(regexPattern));
-        }
-        catch (const std::regex_error&) {
+        } catch (const std::regex_error&) {
             error = "invalid LIKE pattern";
             return false;
         }
     }
-
-    std::string rightValue;
-    std::string rightType;
-
-    if (!getOperandValue(cond.right, row, schema,
-                         rightValue, rightType, error)) {
+    
+    std::string rightValue, rightType;
+    if (!getOperandValue(cond.right, row, schema, rightValue, rightType, error)) {
         return false;
     }
-
+    
     if (leftType != rightType) {
-        error = "type mismatch in condition";
+        error = "type mismatch in condition: " + leftType + " vs " + rightType;
         return false;
     }
+    
+    return compareValues(leftValue, cond.op, rightValue, leftType);
+}
 
-    return compareValues(leftValue, cond.op,
-                         rightValue, leftType);
+bool rowMatchesCondition(
+    const std::vector<std::string>& row,
+    const std::vector<Column>& schema,
+    const ConditionNode* cond,
+    std::string& error
+) {
+    return evaluateConditionTree(row, schema, cond, error);
 }
 
 std::vector<Column> loadSchema(const std::string& tablePath) {
@@ -267,6 +283,7 @@ std::vector<Column> loadSchema(const std::string& tablePath) {
 
     return columns;
 }
+
 std::vector<std::vector<std::string>> loadData(const std::string& tablePath) {
     std::vector<std::vector<std::string>> rows;
 
@@ -347,7 +364,7 @@ void saveDataWithPool(const std::string& tablePath, const std::vector<std::vecto
     }
 }
 
-bool saveSchema(const std::string& tablePath, const std::vector<Column>& columns) { // сохраняет описание таблицы в файл 
+bool saveSchema(const std::string& tablePath, const std::vector<Column>& columns) { 
     std::ofstream out(tablePath + "/schema.txt");
     if (!out) {
         return false;
@@ -362,7 +379,6 @@ bool saveSchema(const std::string& tablePath, const std::vector<Column>& columns
 
     return true;
 }
-
 
 void dropTable(const std::string& tableName) {
     std::string tablePath = resolveTablePath(tableName);
@@ -392,7 +408,6 @@ bool isIntegerValue(const std::string& value) {
         if (value.size() == 1) {
             return false;
         }
-
         start = 1;
     }
 
@@ -428,7 +443,6 @@ void createTableFromAST(const sql::CreateTableCmd& cmd) {
         return;
     }
 
-    // validate columns
     if (cmd.columns.empty()) {
         std::cout << "Error: table must contain at least one column\n";
         return;
@@ -482,20 +496,34 @@ void insertFromAST(const sql::InsertCmd& cmd) {
 
     auto schema = loadSchema(tablePath);
 
-    if (cmd.columns.empty()) {
-        std::cout << "Error: empty column list\n";
-        return;
+    std::vector<std::string> insertColumns = cmd.columns;
+
+    if (insertColumns.empty()) {
+        for (const auto& col : schema) {
+            insertColumns.push_back(col.name);
+        }
     }
 
     std::set<std::string> usedColumns;
-    for (const auto& colName : cmd.columns) {
+    for (const auto& colName : insertColumns) {
         if (usedColumns.count(colName)) {
             std::cout << "Error: duplicate column in INSERT: " << colName << "\n";
             return;
         }
+
         bool found = false;
-        for (const auto& col : schema) if (col.name == colName) { found = true; break; }
-        if (!found) { std::cout << "Error: unknown column " << colName << "\n"; return; }
+        for (const auto& col : schema) {
+            if (col.name == colName) {
+                found = true;
+                break;
+            }
+        }
+
+        if (!found) {
+            std::cout << "Error: unknown column " << colName << "\n";
+            return;
+        }
+
         usedColumns.insert(colName);
     }
 
@@ -509,27 +537,34 @@ void insertFromAST(const sql::InsertCmd& cmd) {
 
     IndexManager indexManager;
     indexManager.buildIndexes(tablePath, schema);
-    indexManager.saveIndexes();
 
     std::vector<std::vector<std::string>> rowsToInsert;
     std::set<std::string> batchIndexedValues;
 
     for (const auto& rowVals : cmd.rows) {
-        if (rowVals.size() != cmd.columns.size()) {
+        if (rowVals.size() != insertColumns.size()) {
             std::cout << "Error: columns and values count mismatch\n";
             return;
         }
 
         std::vector<std::string> row(schema.size(), "NULL");
 
-        for (size_t i = 0; i < cmd.columns.size(); i++) {
-            std::string colName = trim(cmd.columns[i]);
+        for (size_t i = 0; i < insertColumns.size(); i++) {
+            std::string colName = trim(insertColumns[i]);
             std::string val = trim(rowVals[i]);
 
             int colIndex = -1;
-            for (size_t j = 0; j < schema.size(); j++) if (schema[j].name == colName) { colIndex = (int)j; break; }
+            for (size_t j = 0; j < schema.size(); j++) {
+                if (schema[j].name == colName) {
+                    colIndex = static_cast<int>(j);
+                    break;
+                }
+            }
 
-            if (colIndex == -1) { std::cout << "Error: unknown column " << colName << "\n"; return; }
+            if (colIndex == -1) {
+                std::cout << "Error: unknown column " << colName << "\n";
+                return;
+            }
 
             if (val == "NULL") {
                 if (schema[colIndex].notNull || schema[colIndex].indexed) {
@@ -542,7 +577,6 @@ void insertFromAST(const sql::InsertCmd& cmd) {
                     return;
                 }
             } else if (schema[colIndex].type == "string") {
-                val = "pool:" + std::to_string(pool.intern(val));
             }
 
             row[colIndex] = val;
@@ -556,14 +590,8 @@ void insertFromAST(const sql::InsertCmd& cmd) {
 
             if (schema[i].indexed) {
                 std::string key = schema[i].name + "|" + row[i];
-                std::string checkValue;
-                if (schema[i].type == "string" && row[i].find("pool:") == 0) {
-                    size_t id = std::stoull(row[i].substr(5));
-                    checkValue = pool.resolve(id);
-                } else {
-                    checkValue = row[i];
-                }
-                if (!indexManager.checkUnique(schema[i].name, checkValue)) {
+
+                if (!indexManager.checkUnique(schema[i].name, row[i])) {
                     std::cout << "Error: duplicate value for INDEXED column " << schema[i].name << "\n";
                     return;
                 }
@@ -582,63 +610,22 @@ void insertFromAST(const sql::InsertCmd& cmd) {
 
     auto existingRows = loadDataWithPool(tablePath, pool);
 
-    std::ofstream out(tablePath + "/data.txt");
-    if (!out) {
-        std::cout << "Error: failed to open data file\n";
-        return;
+    std::vector<std::vector<std::string>> allRows = existingRows;
+
+    for (const auto& row : rowsToInsert) {
+        allRows.push_back(row);
     }
 
-    for (const auto& row : existingRows) {
-        for (size_t i = 0; i < row.size(); i++) {
-            if (i > 0) out << "|";
-            if (row[i] == "NULL") {
-                out << "NULL";
-            } else if (schema[i].type == "string") {
-                size_t id = pool.intern(row[i]);
-                out << "pool:" << id;
-            } else {
-                out << row[i];
-            }
-        }
-        out << "\n";
-    }
-
-    for (size_t r = 0; r < rowsToInsert.size(); r++) {
-        const auto& row = rowsToInsert[r];
-
-        for (size_t i = 0; i < row.size(); i++) {
-            if (i > 0) out << "|";
-
-            if (row[i] == "NULL") {
-                out << "NULL";
-            } else if (schema[i].type == "string") {
-                out << row[i];
-            } else {
-                out << row[i];
-            }
-        }
-        out << "\n";
-
-        size_t newRowId = existingRows.size() + r;
-
-        for (size_t i = 0; i < schema.size(); i++) {
-            if (schema[i].indexed && row[i] != "NULL") {
-                std::string realValue;
-                if (schema[i].type == "string" && row[i].find("pool:") == 0) {
-                    size_t id = std::stoull(row[i].substr(5));
-                    realValue = pool.resolve(id);
-                } else {
-                    realValue = row[i];
-                }
-                indexManager.insertKey(schema[i].name, realValue, newRowId);
-            }
-        }
-    }
-
+    saveDataWithPool(tablePath, allRows, pool, schema);
     pool.save(tablePath + "/string_pool.txt");
+
+    IndexManager newIndexManager;
+    newIndexManager.buildIndexes(tablePath, schema);
+    newIndexManager.saveIndexes();
 
     std::cout << rowsToInsert.size() << " row(s) inserted\n";
 }
+
 
 void deleteFromAST(const sql::DeleteCmd& cmd) {
     std::string tablePath = resolveTablePath(cmd.tableName);
@@ -653,13 +640,10 @@ void deleteFromAST(const sql::DeleteCmd& cmd) {
     pool.load(tablePath + "/string_pool.txt");
     auto rows = loadDataWithPool(tablePath, pool);
 
-    Condition cond;
     std::string error;
 
-    if (cmd.hasWhere) {
-        cond = cmd.where;
-    } else {
-        std::cout << "Error: invalid DELETE syntax\n";
+    if (!cmd.where) {
+        std::cout << "Error: DELETE requires WHERE\n";
         return;
     }
 
@@ -668,7 +652,11 @@ void deleteFromAST(const sql::DeleteCmd& cmd) {
 
     for (const auto& row : rows) {
         std::string matchError;
-        if (rowMatchesCondition(row, schema, cond, matchError)) {
+        if (rowMatchesCondition(row, schema, (const ConditionNode*)cmd.where, matchError)) {
+            if (!matchError.empty()) {
+                std::cout << "Error: " << matchError << "\n";
+                return;
+            }
             deletedCount++;
         } else {
             remainingRows.push_back(row);
@@ -677,6 +665,11 @@ void deleteFromAST(const sql::DeleteCmd& cmd) {
 
     saveDataWithPool(tablePath, remainingRows, pool, schema);
     pool.save(tablePath + "/string_pool.txt");
+
+    IndexManager indexManager;
+    indexManager.buildIndexes(tablePath, schema);
+    indexManager.saveIndexes();
+
 
     std::cout << deletedCount << " row(s) deleted\n";
 }
@@ -727,15 +720,13 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
                 std::cout << "Error: invalid int value\n";
                 return;
             }
-        } else if (schema[colIndex].type == "string") {
-            // строка уже приходит из AST без кавычек
         }
 
         setIndexes.push_back(colIndex);
         setValues.push_back(value);
     }
 
-    if (!cmd.hasWhere) {
+    if (!cmd.where) {
         std::cout << "Error: UPDATE requires WHERE\n";
         return;
     }
@@ -746,7 +737,7 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
     for (size_t r = 0; r < newRows.size(); r++) {
         std::string errorText;
 
-        bool matched = rowMatchesCondition(newRows[r], schema, cmd.where, errorText);
+        bool matched = rowMatchesCondition(newRows[r], schema, (const ConditionNode*)cmd.where, errorText);
 
         if (!errorText.empty()) {
             std::cout << "Error: " << errorText << "\n";
@@ -757,7 +748,6 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
             for (size_t i = 0; i < setIndexes.size(); i++) {
                 newRows[r][setIndexes[i]] = setValues[i];
             }
-
             updatedCount++;
         }
     }
@@ -823,41 +813,59 @@ void selectFromAST(const sql::SelectCmd& cmd) {
         }
     }
 
-    IndexManager indexManager; indexManager.buildIndexes(tablePath, schema); indexManager.saveIndexes();
+    IndexManager indexManager; 
+    indexManager.buildIndexes(tablePath, schema); 
+    indexManager.saveIndexes();
 
-    bool useIndex = false; std::set<size_t> indexedRowIds;
+    bool useIndex = false; 
+    std::set<size_t> indexedRowIds;
+    
+    const ConditionNode* whereCond = (const ConditionNode*)cmd.where;
 
-    if (cmd.hasWhere) {
-        Condition cond = cmd.where;
+    if (whereCond && whereCond->type == ConditionNode::COMPARISON) {
         int indexedColumn = -1;
-        for (size_t i = 0; i < schema.size(); i++) if (schema[i].name == cond.left && schema[i].indexed) { indexedColumn = (int)i; break; }
+        for (size_t i = 0; i < schema.size(); i++) {
+            if (schema[i].name == whereCond->left && schema[i].indexed) {
+                indexedColumn = (int)i;
+                break;
+            }
+        }
 
-        if (indexedColumn != -1 && indexManager.hasIndex(cond.left) && cond.op != "LIKE") {
-            std::string colName = cond.left;
+        if (indexedColumn != -1 && indexManager.hasIndex(whereCond->left) && whereCond->op != "LIKE") {
+            std::string colName = whereCond->left;
             std::string colType = schema[indexedColumn].type;
 
-            if (cond.op == "==") {
-                std::string key = cond.right;
-                if (colType == "string") {
-                    if (key.find("pool:") == 0) { size_t id = std::stoull(key.substr(5)); key = pool.resolve(id); }
-                    else {  }
+            if (whereCond->op == "==") {
+                std::string key = whereCond->right;
+                size_t rowId; 
+                if (indexManager.findRowId(colName, key, rowId)) {
+                    indexedRowIds.insert(rowId);
                 }
-                size_t rowId; if (indexManager.findRowId(colName, key, rowId)) indexedRowIds.insert(rowId);
                 useIndex = true;
-            } else if (cond.op == "BETWEEN") {
-                std::string leftKey = cond.right; std::string rightKey = cond.right2;
+            } else if (whereCond->op == "BETWEEN") {
+                std::string leftKey = whereCond->right; 
+                std::string rightKey = whereCond->right2;
                 auto ids = indexManager.findRange(colName, leftKey, rightKey);
-                indexedRowIds.insert(ids.begin(), ids.end()); useIndex = true;
-            } else {
-                std::string bound = cond.right;
+                indexedRowIds.insert(ids.begin(), ids.end()); 
+                useIndex = true;
+            } else if (whereCond->op == ">" || whereCond->op == ">=" || whereCond->op == "<" || whereCond->op == "<=") {
+                std::string bound = whereCond->right;
                 std::string leftKey, rightKey;
                 if (schema[indexedColumn].type == "int") {
                     leftKey = std::to_string(std::numeric_limits<int>::min());
                     rightKey = std::to_string(std::numeric_limits<int>::max());
-                } else { leftKey = ""; rightKey = std::string(100, char(127)); }
-                if (cond.op == ">" || cond.op == ">=") leftKey = bound; else rightKey = bound;
+                } else { 
+                    leftKey = ""; 
+                    rightKey = std::string(100, char(127)); 
+                }
+                if (whereCond->op == ">" || whereCond->op == ">=") {
+                    leftKey = bound;
+                } else {
+                    rightKey = bound;
+                }
                 auto ids = indexManager.findRange(colName, leftKey, rightKey);
-                indexedRowIds.insert(ids.begin(), ids.end()); useIndex = true;
+                indexedRowIds.insert(ids.begin(), ids.end()); 
+                useIndex = true;
             }
         }
     }
@@ -869,9 +877,13 @@ void selectFromAST(const sql::SelectCmd& cmd) {
         if (useIndex && indexedRowIds.count(rowIndex) == 0) continue;
         const auto& row = rows[rowIndex];
 
-        if (cmd.hasWhere) {
-            std::string error; bool matched = rowMatchesCondition(row, schema, cmd.where, error);
-            if (!error.empty()) { std::cout << "Error: " << error << "\n"; return; }
+        if (whereCond) {
+            std::string error; 
+            bool matched = rowMatchesCondition(row, schema, whereCond, error);
+            if (!error.empty()) { 
+                std::cout << "Error: " << error << "\n"; 
+                return; 
+            }
             if (!matched) continue;
         }
 
@@ -882,9 +894,20 @@ void selectFromAST(const sql::SelectCmd& cmd) {
             size_t j = selectedIndexes[k];
             std::cout << "\"" << outputNames[k] << "\": ";
             std::string val = (j < row.size()) ? row[j] : "NULL";
-            if (val == "NULL") { std::cout << "null"; }
-            else if (schema[j].type == "int") { std::cout << val; }
-            else { std::string realValue; if (val.find("pool:") == 0) { size_t id = std::stoull(val.substr(5)); realValue = pool.resolve(id); } else realValue = val; std::cout << "\"" << realValue << "\""; }
+            if (val == "NULL") { 
+                std::cout << "null"; 
+            } else if (schema[j].type == "int") { 
+                std::cout << val; 
+            } else { 
+                std::string realValue; 
+                if (val.find("pool:") == 0) { 
+                    size_t id = std::stoull(val.substr(5)); 
+                    realValue = pool.resolve(id); 
+                } else {
+                    realValue = val; 
+                }
+                std::cout << "\"" << realValue << "\""; 
+            }
             if (k + 1 < selectedIndexes.size()) std::cout << ", ";
         }
         std::cout << "}";
