@@ -1,0 +1,8 @@
+client_id=1 | handler_id=1 | start=2026-05-27 17:44:47 | end=2026-05-27 17:44:47 | status=ERROR | request=CREATE DATABASE testdb;
+
+client_id=2 | handler_id=1 | start=2026-05-27 17:44:54 | end=2026-05-27 17:44:54 | status=OK | request=USE testdb;
+
+client_id=3 | handler_id=1 | start=2026-05-27 17:45:05 | end=2026-05-27 17:45:05 | status=ERROR | request=SELECT * FROM unknown;
+
+client_id=1 | handler_id=1 | start=2026-05-27 17:46:08 | end=2026-05-27 17:46:08 | status=ERROR | request=SELECT * FROM unknown;
+

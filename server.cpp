@@ -4,6 +4,7 @@
 
 #include "module/database.h"
 #include "module/parser.h"
+#include "module/server/logger.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
@@ -47,6 +48,9 @@ int main() {
 
         std::cout << "DB server started on port 54000\n";
 
+        int nextClientId = 1;
+        int handlerId = 1;
+
         while (true) {
             SOCKET clientSocket = accept(serverSocket, nullptr, nullptr);
 
@@ -64,9 +68,24 @@ int main() {
                 std::string sql = buffer;
                 std::cout << "Request: " << sql << "\n";
 
+                int clientId = nextClientId++;
+
+                std::string startTime = currentTime();
+
                 std::string response = executeSQLForServer(sql);
 
+                std::string endTime = currentTime();
+
+                std::string status = "OK";
+
+                if (response.find("Error") != std::string::npos ||
+                    response.find("error") != std::string::npos) {
+                    status = "ERROR";
+                }
+
                 send(clientSocket, response.c_str(), (int)response.size(), 0);
+
+                writeAccessLog(clientId, handlerId, sql, status, startTime, endTime);
             }
 
             closesocket(clientSocket);
