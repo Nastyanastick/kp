@@ -1,5 +1,5 @@
 ﻿################################################################################
-# Данный GITIGNORE-файл был автоматически создан Microsoft(R) Visual Studio.
+# Visual Studio
 ################################################################################
 
 *.exe
@@ -7,6 +7,16 @@
 *.obj
 *.dll
 
+lex.yy.c
+lex.yy.cpp
+sql_parser.tab.c
+sql_parser.tab.cpp
+sql_parser.tab.h
+sql_parser.tab.hpp
+
 data/
-/.vs
-access.log/
+access.log
+
+.vs/
+.vscode/
+.idea/

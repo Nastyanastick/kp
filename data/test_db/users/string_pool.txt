@@ -1,5 +1,0 @@
-0|Alice
-1|Moscow
-2|Bob
-3|SPB
-4|Charlie
