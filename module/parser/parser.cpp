@@ -1,6 +1,6 @@
 #include "parser.h"
-#include "database.h"
-#include "table.h"
+#include "../core/database.h"
+#include "../core/table.h"
 #include "sql_parser.h"
 #include "sql_ast.h"
 #include <iostream>

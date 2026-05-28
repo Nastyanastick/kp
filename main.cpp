@@ -1,6 +1,6 @@
 #include <iostream>
-#include "module/parser.h"
-#include "module/database.h"
+#include "module/parser/parser.h"
+#include "module/core/database.h"
 
 int main(int argc, char* argv[]) {
 

@@ -69,7 +69,7 @@ void sql_push_delete_finalize();
 %}
 
 %code requires {
-#include "table.h"
+#include "../core/table.h"
 #include "sql_ast.h"
 }
 

@@ -1,8 +1,8 @@
 #pragma once
 
 #include "bplustree.h"
-#include "value.h"
-#include "table.h"
+#include "../core/value.h"
+#include "../core/table.h"
 #include <filesystem>
 
 #include <string>

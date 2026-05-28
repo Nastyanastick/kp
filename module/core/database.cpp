@@ -1,5 +1,5 @@
 #include "database.h"
-#include "parser.h"
+#include "../parser/parser.h"
 
 #include <iostream>
 #include <direct.h>

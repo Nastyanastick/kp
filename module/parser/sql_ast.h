@@ -1,7 +1,7 @@
 #pragma once
 #include <string>
 #include <vector>
-#include "table.h"
+#include "../core/table.h"
 
 struct ConditionNode {
     enum Type {

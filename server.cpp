@@ -3,8 +3,8 @@
 #include <winsock2.h>
 #include <chrono>
 
-#include "module/database.h"
-#include "module/parser.h"
+#include "module/core/database.h"
+#include "module/parser/parser.h"
 #include "module/server/logger.h"
 #include "module/server/telemetry.h"
 

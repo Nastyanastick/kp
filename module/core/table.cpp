@@ -1,9 +1,9 @@
 #include "table.h"
-#include "parser.h"
+#include "../parser/parser.h"
 #include "database.h"
-#include "index_manager.h"
-#include "string_pool.h"
-#include "sql_ast.h"
+#include "../index/index_manager.h"
+#include "../memory/string_pool.h"
+#include "../parser/sql_ast.h"
 
 #include <iostream>
 #include <fstream>
