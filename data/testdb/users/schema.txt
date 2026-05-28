@@ -1,3 +1,4 @@
-id|int|0|1
+id|int|1|1
 name|string|0|0
 age|int|0|0
+city|string|0|0

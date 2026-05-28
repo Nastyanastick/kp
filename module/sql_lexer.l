@@ -30,8 +30,8 @@ STRINGCHAR [^\"]*
 ","                     { return ','; }
 "("                     { return '('; }
 ")"                     { return ')'; }
-"*"                     { return '*'; }
 "="                     { return '='; }
+"*"                     { return '*'; }
 ";"                     { return ';'; }
 
 "CREATE"|"create"      { return CREATE; }

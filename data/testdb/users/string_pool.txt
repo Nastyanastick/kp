@@ -1,1 +1,5 @@
-0|Anna
+0|Alice
+1|Moscow
+2|Bob
+3|Kyiv
+4|London

@@ -1,16 +1,21 @@
 #include <iostream>
 #include <string>
 #include <winsock2.h>
+#include <chrono>
 
 #include "module/database.h"
 #include "module/parser.h"
 #include "module/server/logger.h"
+#include "module/server/telemetry.h"
 
 #pragma comment(lib, "ws2_32.lib")
 
 int main() {
     try {
         ensureDataDirectory();
+
+        Telemetry telemetry;
+        telemetry.start();
 
         WSADATA wsaData;
 
@@ -71,17 +76,24 @@ int main() {
                 int clientId = nextClientId++;
 
                 std::string startTime = currentTime();
+                auto start = std::chrono::steady_clock::now();
 
                 std::string response = executeSQLForServer(sql);
 
+                auto end = std::chrono::steady_clock::now();
                 std::string endTime = currentTime();
 
+                long long durationMs = std::chrono::duration_cast<std::chrono::milliseconds>(end - start).count();
                 std::string status = "OK";
 
                 if (response.find("Error") != std::string::npos ||
                     response.find("error") != std::string::npos) {
                     status = "ERROR";
                 }
+
+                bool isError = (status == "ERROR");
+
+                telemetry.recordRequest(durationMs, isError);
 
                 send(clientSocket, response.c_str(), (int)response.size(), 0);
 
@@ -90,6 +102,7 @@ int main() {
 
             closesocket(clientSocket);
         }
+        telemetry.stop();
 
         closesocket(serverSocket);
         WSACleanup();

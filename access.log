@@ -6,3 +6,45 @@ client_id=3 | handler_id=1 | start=2026-05-27 17:45:05 | end=2026-05-27 17:45:05
 
 client_id=1 | handler_id=1 | start=2026-05-27 17:46:08 | end=2026-05-27 17:46:08 | status=ERROR | request=SELECT * FROM unknown;
 
+client_id=1 | handler_id=1 | start=2026-05-28 10:27:13 | end=2026-05-28 10:27:13 | status=OK | request=DROP DATABASE testdb;
+
+client_id=2 | handler_id=1 | start=2026-05-28 10:27:21 | end=2026-05-28 10:27:21 | status=OK | request=CREATE DATABASE testdb;
+
+client_id=3 | handler_id=1 | start=2026-05-28 10:27:29 | end=2026-05-28 10:27:29 | status=OK | request=USE testdb;
+
+client_id=4 | handler_id=1 | start=2026-05-28 10:27:39 | end=2026-05-28 10:27:39 | status=OK | request=CREATE TABLE users (
+    id int INDEXED,
+    name string,
+    age int,
+    city string
+);
+
+client_id=5 | handler_id=1 | start=2026-05-28 10:27:49 | end=2026-05-28 10:27:49 | status=OK | request=INSERT INTO users (id, name, age, city)
+VALUES (1, "Alice", 25, "Moscow");
+
+client_id=6 | handler_id=1 | start=2026-05-28 10:27:57 | end=2026-05-28 10:27:57 | status=OK | request=INSERT INTO users (id, name, age, city)
+VALUES (2, "Bob", 30, "Kyiv");
+
+client_id=7 | handler_id=1 | start=2026-05-28 10:28:05 | end=2026-05-28 10:28:05 | status=OK | request=SELECT * FROM users;
+
+client_id=8 | handler_id=1 | start=2026-05-28 10:28:45 | end=2026-05-28 10:28:45 | status=OK | request=SELECT id, name FROM users;
+
+client_id=9 | handler_id=1 | start=2026-05-28 10:28:52 | end=2026-05-28 10:28:52 | status=OK | request=SELECT * FROM users WHERE name LIKE "A%";
+
+client_id=10 | handler_id=1 | start=2026-05-28 10:28:59 | end=2026-05-28 10:28:59 | status=ERROR | request=UPDATE users SET city = "London" WHERE id = 2;
+
+client_id=11 | handler_id=1 | start=2026-05-28 10:29:22 | end=2026-05-28 10:29:22 | status=OK | request=UPDATE users SET city = "London" WHERE id == 2;
+
+client_id=1 | handler_id=1 | start=2026-05-28 10:34:10 | end=2026-05-28 10:34:10 | status=ERROR | request=UPDATE users SET city = "Paris" WHERE id = 2;
+
+client_id=1 | handler_id=1 | start=2026-05-28 10:37:08 | end=2026-05-28 10:37:08 | status=ERROR | request=UPDATE users SET city = "Paris" WHERE id = 2;
+
+client_id=1 | handler_id=1 | start=2026-05-28 10:42:30 | end=2026-05-28 10:42:30 | status=ERROR | request=Remove-Item -Recurse -Force data -ErrorAction SilentlyContinue
+UPDATE users SET city = "Paris" WHERE id = 2;
+
+client_id=2 | handler_id=1 | start=2026-05-28 10:43:08 | end=2026-05-28 10:43:08 | status=ERROR | request=UPDATE users SET city = "Paris" WHERE id == 2;
+
+client_id=1 | handler_id=1 | start=2026-05-28 10:45:16 | end=2026-05-28 10:45:16 | status=ERROR | request=UPDATE users SET city = "Paris" WHERE id = 2;
+
+client_id=2 | handler_id=1 | start=2026-05-28 10:45:23 | end=2026-05-28 10:45:23 | status=ERROR | request=UPDATE users SET city = "Rome" WHERE id == 2;
+
