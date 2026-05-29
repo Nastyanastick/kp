@@ -34,6 +34,21 @@ static char* quote_string(const char* s) {
     return r;
 }
 
+static char* make_table_name(const char* db, const char* table) {
+    std::string tmp;
+    if (db && table) {
+        tmp = std::string(db) + "." + std::string(table);
+    } else if (table) {
+        tmp = table;
+    } else {
+        tmp = "";
+    }
+
+    char* r = (char*)malloc(tmp.size() + 1);
+    memcpy(r, tmp.c_str(), tmp.size() + 1);
+    return r;
+}
+
 void sql_push_create_database(const char* name);
 void sql_push_drop_database(const char* name);
 void sql_push_use_database(const char* name);
@@ -93,7 +108,7 @@ void sql_push_delete_finalize();
 %left AND
 
 %type <cond> cond or_expr and_expr primary_expr comparison_expr
-%type <str> compare_value assign_value
+%type <str> compare_value assign_value table_name
 
 %%
 
@@ -112,40 +127,52 @@ stmt:
   | USE IDENTIFIER ';'
         { sql_push_use_database($2); free($2); }
 
-  | CREATE TABLE IDENTIFIER
+  | CREATE TABLE table_name
         { sql_push_create_table_start($3); free($3); }
     '(' column_list ')' ';'
         { sql_push_create_table_end(); }
 
-  | DROP TABLE IDENTIFIER ';'
+  | DROP TABLE table_name ';'
         { sql_push_drop_table($3); free($3); }
 
-  | INSERT INTO IDENTIFIER
+  | INSERT INTO table_name
         { sql_push_insert($3); free($3); }
     '(' id_list ')' VALUES insert_row_list ';'
         { sql_push_insert_finalize(); }
 
-  | INSERT INTO IDENTIFIER
+  | INSERT INTO table_name
         { sql_push_insert($3); free($3); }
     VALUES insert_row_list ';'
         { sql_push_insert_finalize(); }
 
   | SELECT
         { sql_push_select_start(); }
-    select_list FROM IDENTIFIER
+    select_list FROM table_name
         { sql_select_set_table($5); free($5); }
     select_where ';'
         { sql_push_select_finalize(); }
 
-  | UPDATE IDENTIFIER
+  | UPDATE table_name
         { sql_push_update_start($2); free($2); }
     SET assignment_list update_where ';'
         { sql_push_update_finalize(); }
 
-  | DELETE FROM IDENTIFIER
+  | DELETE FROM table_name
         { sql_push_delete_start($3); free($3); }
     delete_where ';'
         { sql_push_delete_finalize(); }
+  ;
+
+table_name:
+    IDENTIFIER
+        { $$ = $1; }
+
+  | IDENTIFIER '.' IDENTIFIER
+        {
+            $$ = make_table_name($1, $3);
+            free($1);
+            free($3);
+        }
   ;
 
 column_list:
