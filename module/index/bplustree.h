@@ -10,7 +10,7 @@ struct BPlusNode {
     std::vector<BPlusNode*> children;
     BPlusNode* next;
     BPlusNode* parent;
-    
+
     int pageId;
 
     BPlusNode(bool leaf);
@@ -39,7 +39,7 @@ private:
     void assignPageIds(BPlusNode* node, int& nextId);
     std::string nodeToJson(BPlusNode* node) const;
     void collectAllPages(BPlusNode* node, std::vector<std::string>& pages, int& maxPageId);
-    
+
 public:
     BPlusTree(int order, const std::string& keyType);
     ~BPlusTree();
@@ -53,9 +53,10 @@ public:
 
     BPlusNode* getRoot() const;
 
-    std::vector<std::pair<std::string, size_t>>
-    getAllKeyValues() const;
-    
+    std::vector<std::pair<std::string, size_t>> getAllKeyValues() const;
+
+    void shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds);
+
     void saveToJsonFile(const std::string& path, const std::string& column);
     bool loadFromJsonFile(const std::string& path);
     int getMaxPageId() const;

@@ -257,6 +257,24 @@ std::vector<size_t> IndexManager::findRange(
     return indexes[activeTable][column]->rangeSearch(left, right);
 }
 
+
+void IndexManager::shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds) {
+    if (deletedRowIds.empty()) {
+        return;
+    }
+
+    auto itTable = indexes.find(activeTable);
+    if (itTable == indexes.end()) {
+        return;
+    }
+
+    for (auto& [column, tree] : itTable->second) {
+        if (tree) {
+            tree->shiftRowIdsAfterDeleted(deletedRowIds);
+        }
+    }
+}
+
 void IndexManager::saveIndexes() {
     std::filesystem::path dir = activeTablePath;
 

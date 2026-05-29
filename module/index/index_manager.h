@@ -33,9 +33,9 @@ public:
                      const std::string& rawValue);
 
     std::vector<size_t> findRange(
-    const std::string& column,
-    const std::string& left,
-    const std::string& right
+        const std::string& column,
+        const std::string& left,
+        const std::string& right
     );
 
     bool findRowId(const std::string& column,
@@ -80,7 +80,9 @@ public:
                    const std::string& type,
                    const std::string& path);
 
+    void shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds);
+
     void saveIndexes();
     void loadIndexes(const std::filesystem::path& tablePath,
-                 const std::vector<Column>& schema);
+                     const std::vector<Column>& schema);
 };

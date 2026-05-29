@@ -518,6 +518,21 @@ void BPlusTree::collectAllPages(BPlusNode* node, std::vector<std::string>& pages
 
 void BPlusTree::saveToJsonFile(const std::string& path, const std::string& column) {
     if (!root) {
+        std::ofstream out(path);
+        if (!out.is_open()) {
+            return;
+        }
+
+        out << "{\\n";
+        out << "  \"type\": \"bplus_tree_index\",\\n";
+        out << "  \"version\": 1,\\n";
+        out << "  \"column\": \"" << column << "\",\\n";
+        out << "  \"keyType\": \"" << keyType << "\",\\n";
+        out << "  \"order\": " << order << ",\\n";
+        out << "  \"rootPageId\": -1,\\n";
+        out << "  \"nextPageId\": 1,\\n";
+        out << "  \"pages\": []\\n";
+        out << "}\\n";
         return;
     }
     
@@ -708,6 +723,39 @@ bool BPlusTree::loadFromJsonFile(const std::string& path) {
     }
     
     return true;
+}
+
+
+void BPlusTree::shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds) {
+    if (!root || deletedRowIds.empty()) {
+        return;
+    }
+
+    std::vector<size_t> sortedDeleted = deletedRowIds;
+    std::sort(sortedDeleted.begin(), sortedDeleted.end());
+    sortedDeleted.erase(std::unique(sortedDeleted.begin(), sortedDeleted.end()), sortedDeleted.end());
+
+    BPlusNode* current = root;
+    while (current && !current->isLeaf) {
+        current = current->children[0];
+    }
+
+    while (current) {
+        for (size_t i = 0; i < current->values.size(); i++) {
+            size_t oldRowId = current->values[i];
+
+            size_t shift = 0;
+            while (shift < sortedDeleted.size() && sortedDeleted[shift] < oldRowId) {
+                shift++;
+            }
+
+            if (shift > 0) {
+                current->values[i] = oldRowId - shift;
+            }
+        }
+
+        current = current->next;
+    }
 }
 
 int BPlusTree::getMaxPageId() const {

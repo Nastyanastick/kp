@@ -667,39 +667,85 @@ void deleteFromAST(const sql::DeleteCmd& cmd) {
     pool.load(tablePath + "/string_pool.txt");
     auto rows = loadDataWithPool(tablePath, pool);
 
-    std::string error;
-
     if (!cmd.where) {
         std::cout << "Error: DELETE requires WHERE\n";
         return;
     }
 
     std::vector<std::vector<std::string>> remainingRows;
-    int deletedCount = 0;
+    std::vector<size_t> deletedRowIds;
+    std::vector<std::vector<std::string>> deletedRows;
 
-    for (const auto& row : rows) {
+    for (size_t rowId = 0; rowId < rows.size(); rowId++) {
         std::string matchError;
-        if (rowMatchesCondition(row, schema, (const ConditionNode*)cmd.where, matchError)) {
-            if (!matchError.empty()) {
-                std::cout << "Error: " << matchError << "\n";
-                return;
-            }
-            deletedCount++;
+        bool matched = rowMatchesCondition(rows[rowId], schema, (const ConditionNode*)cmd.where, matchError);
+
+        if (!matchError.empty()) {
+            std::cout << "Error: " << matchError << "\n";
+            return;
+        }
+
+        if (matched) {
+            deletedRowIds.push_back(rowId);
+            deletedRows.push_back(rows[rowId]);
         } else {
-            remainingRows.push_back(row);
+            remainingRows.push_back(rows[rowId]);
         }
     }
+
+    if (deletedRowIds.empty()) {
+        std::cout << "0 row(s) deleted\n";
+        return;
+    }
+
+    IndexManager indexManager;
+    indexManager.loadIndexes(tablePath, schema);
+
+    bool needBuildIndexes = false;
+    for (const auto& col : schema) {
+        if (col.indexed && !indexManager.hasIndex(col.name)) {
+            needBuildIndexes = true;
+            break;
+        }
+    }
+
+    if (needBuildIndexes) {
+        indexManager.buildIndexes(tablePath, schema);
+    }
+
+    std::string pureTableName = getPureTableName(cmd.tableName);
+
+    for (const auto& deletedRow : deletedRows) {
+        for (size_t col = 0; col < schema.size(); col++) {
+            if (!schema[col].indexed) {
+                continue;
+            }
+
+            Value indexValue;
+            indexValue.isNull = false;
+
+            if (schema[col].type == "int") {
+                indexValue.type = Value::INT;
+                indexValue.intValue = std::stoi(deletedRow[col]);
+            } else {
+                indexValue.type = Value::STRING;
+                indexValue.stringValue = deletedRow[col];
+            }
+
+            indexManager.deleteKey(pureTableName, schema[col].name, indexValue);
+        }
+    }
+
+    indexManager.shiftRowIdsAfterDeleted(deletedRowIds);
 
     saveDataWithPool(tablePath, remainingRows, pool, schema);
     pool.save(tablePath + "/string_pool.txt");
 
-    IndexManager indexManager;
-    indexManager.buildIndexes(tablePath, schema);
     indexManager.saveIndexes();
 
-
-    std::cout << deletedCount << " row(s) deleted\n";
+    std::cout << deletedRowIds.size() << " row(s) deleted\n";
 }
+
 
 void updateFromAST(const sql::UpdateCmd& cmd) {
     std::string tablePath = resolveTablePath(cmd.tableName);
