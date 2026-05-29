@@ -9,6 +9,8 @@
 #include <vector>
 #include <cctype>
 
+const size_t MAX_COMMAND_LENGTH = 10000;
+
 
 std::string trim(const std::string& s) {
     size_t start = 0;
@@ -72,6 +74,11 @@ void processCommand(const std::string& command) {
     std::string cleaned = trim(command);
 
     if (cleaned.empty()) {
+        return;
+    }
+
+    if (cleaned.size() > MAX_COMMAND_LENGTH) {
+        std::cout << "Error: command is too long\n";
         return;
     }
 

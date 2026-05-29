@@ -19,6 +19,9 @@
 #include <regex>
 #include <limits>
 
+const size_t MAX_STRING_LENGTH = 255;
+
+
 static bool pathExists(const std::string& path) {
     return _access(path.c_str(), 0) == 0;
 }
@@ -577,6 +580,10 @@ void insertFromAST(const sql::InsertCmd& cmd) {
                     return;
                 }
             } else if (schema[colIndex].type == "string") {
+                if (val.size() > MAX_STRING_LENGTH) {
+                    std::cout << "Error: string value is too long for column " << colName << "\n";
+                    return;
+                }
             }
 
             row[colIndex] = val;
@@ -718,6 +725,12 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
                 std::cout << "Error: invalid int value\n";
                 return;
             }
+        } else if (schema[colIndex].type == "string") {
+            if (value.size() > MAX_STRING_LENGTH) {
+                std::cout << "Error: string value is too long for column " << colName << "\n";
+                return;
+            }
+        
         }
 
         setIndexes.push_back(colIndex);
