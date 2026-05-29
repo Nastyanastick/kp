@@ -17,6 +17,7 @@ private:
 
     std::string valueToKey(const Value& v) const;
     std::string activeTable;
+    std::string activeTablePath;
 
     Value makeValue(const std::string& raw, const std::string& type) const;
 

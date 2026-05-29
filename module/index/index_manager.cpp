@@ -83,24 +83,8 @@ void IndexManager::saveIndex(const std::string& table,
 {
     if (!hasIndex(table, column)) return;
 
-    std::ofstream out(path);
-    if (!out.is_open()) return;
-
     BPlusTree* tree = indexes[table][column];
-    BPlusNode* leaf = tree->getRoot();
-
-    // спускаемся до самого левого листа
-    while (leaf && !leaf->isLeaf) {
-        leaf = leaf->children[0];
-    }
-
-    // идём по листьям через next
-    while (leaf) {
-        for (size_t i = 0; i < leaf->keys.size(); i++) {
-            out << leaf->keys[i] << "|" << leaf->values[i] << "\n";
-        }
-        leaf = leaf->next;
-    }
+    tree->saveToJsonFile(path, column);
 }
 
 
@@ -112,6 +96,21 @@ void IndexManager::loadIndex(const std::string& table,
     createIndex(table, column, type);
 
     std::ifstream in(path);
+    if (!in.is_open()) return;
+
+    std::string firstLine;
+    std::getline(in, firstLine);
+    in.close();
+
+    if (firstLine.find("{") != std::string::npos || 
+        firstLine.find("\"type\"") != std::string::npos) {
+        // It's JSON format
+        if (indexes[table][column]->loadFromJsonFile(path)) {
+            return;
+        }
+    }
+
+    in.open(path);
     if (!in.is_open()) return;
 
     std::string line;
@@ -151,6 +150,7 @@ Value IndexManager::makeValue(const std::string& raw, const std::string& type) c
 void IndexManager::buildIndexes(const std::filesystem::path& tablePath,
                                 const std::vector<Column>& schema) {
     activeTable = tablePath.filename().string();
+    activeTablePath = tablePath.string();
 
     for (const auto& col : schema) {
         if (col.indexed) {
@@ -258,20 +258,11 @@ std::vector<size_t> IndexManager::findRange(
 }
 
 void IndexManager::saveIndexes() {
-    std::filesystem::path dir = activeTable;
+    std::filesystem::path dir = activeTablePath;
 
     for (const auto& [column, tree] : indexes[activeTable]) {
-        std::ofstream out(dir / (column + ".idx"));
-
-        if (!out) {
-            continue;
-        }
-
-        auto values = tree->getAllKeyValues();
-
-        for (const auto& pair : values) {
-            out << pair.first << "|" << pair.second << "\n";
-        }
+        std::string idxPath = (dir / (column + ".idx")).string();
+        tree->saveToJsonFile(idxPath, column);
     }
 }
 
@@ -279,7 +270,8 @@ void IndexManager::loadIndexes(
     const std::filesystem::path& tablePath,
     const std::vector<Column>& schema
 ) {
-    activeTable = tablePath.string();
+    activeTable = tablePath.filename().string();
+    activeTablePath = tablePath.string();
 
     indexes[activeTable].clear();
 
@@ -291,14 +283,21 @@ void IndexManager::loadIndexes(
         indexes[activeTable][col.name] =
             new BPlusTree(order, col.type);
 
-        std::ifstream in(tablePath / (col.name + ".idx"));
+        std::string idxPath = (tablePath / (col.name + ".idx")).string();
+        std::ifstream in(idxPath);
 
-        if (!in) {
+        if (!in.is_open()) {
             continue;
         }
 
-        std::string line;
+        if (indexes[activeTable][col.name]->loadFromJsonFile(idxPath)) {
+            continue;
+        }
 
+        in.clear();
+        in.seekg(0);
+
+        std::string line;
         while (std::getline(in, line)) {
             size_t sep = line.find('|');
 
@@ -307,8 +306,7 @@ void IndexManager::loadIndexes(
             }
 
             std::string key = line.substr(0, sep);
-            size_t rowId =
-                static_cast<size_t>(std::stoull(line.substr(sep + 1)));
+            size_t rowId = static_cast<size_t>(std::stoull(line.substr(sep + 1)));
 
             indexes[activeTable][col.name]->insert(key, rowId);
         }

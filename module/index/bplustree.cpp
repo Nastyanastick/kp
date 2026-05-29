@@ -1,9 +1,12 @@
 #include "bplustree.h"
 #include <algorithm>
 #include <stdexcept>
+#include <fstream>
+#include <sstream>
+#include <map>
 
 BPlusNode::BPlusNode(bool leaf)
-    : isLeaf(leaf), next(nullptr), parent(nullptr) {}
+    : isLeaf(leaf), next(nullptr), parent(nullptr), pageId(-1) {}
 
 BPlusTree::BPlusTree(int order, const std::string& keyType)
     : root(nullptr), order(order), keyType(keyType) {}
@@ -444,4 +447,289 @@ BPlusTree::getAllKeyValues() const {
     }
 
     return result;
+}
+
+
+void BPlusTree::assignPageIds(BPlusNode* node, int& nextId) {
+    if (!node) return;
+    
+    node->pageId = nextId++;
+    
+    if (!node->isLeaf) {
+        for (auto child : node->children) {
+            assignPageIds(child, nextId);
+        }
+    }
+}
+
+std::string BPlusTree::nodeToJson(BPlusNode* node) const {
+    std::stringstream ss;
+    ss << "{";
+    ss << "\"pageId\":" << node->pageId << ",";
+    ss << "\"isLeaf\":" << (node->isLeaf ? "true" : "false") << ",";
+    
+    // keys
+    ss << "\"keys\":[";
+    for (size_t i = 0; i < node->keys.size(); i++) {
+        if (i > 0) ss << ",";
+        ss << "\"" << node->keys[i] << "\"";
+    }
+    ss << "],";
+    
+    if (node->isLeaf) {
+        ss << "\"rowIds\":[";
+        for (size_t i = 0; i < node->values.size(); i++) {
+            if (i > 0) ss << ",";
+            ss << node->values[i];
+        }
+        ss << "],";
+        
+        int nextLeafId = -1;
+        if (node->next) {
+            nextLeafId = node->next->pageId;
+        }
+        ss << "\"nextLeafPageId\":" << nextLeafId;
+    } else {
+        ss << "\"children\":[";
+        for (size_t i = 0; i < node->children.size(); i++) {
+            if (i > 0) ss << ",";
+            ss << node->children[i]->pageId;
+        }
+        ss << "]";
+    }
+    
+    ss << "}";
+    return ss.str();
+}
+
+void BPlusTree::collectAllPages(BPlusNode* node, std::vector<std::string>& pages, int& maxPageId) {
+    if (!node) return;
+    
+    maxPageId = std::max(maxPageId, node->pageId);
+    
+    pages.push_back(nodeToJson(node));
+    
+    if (!node->isLeaf) {
+        for (auto child : node->children) {
+            collectAllPages(child, pages, maxPageId);
+        }
+    }
+}
+
+void BPlusTree::saveToJsonFile(const std::string& path, const std::string& column) {
+    if (!root) {
+        return;
+    }
+    
+    int nextId = 1;
+    assignPageIds(root, nextId);
+    
+    std::vector<std::string> pages;
+    int maxPageId = 0;
+    collectAllPages(root, pages, maxPageId);
+    
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        return;
+    }
+    
+    out << "{\n";
+    out << "  \"type\": \"bplus_tree_index\",\n";
+    out << "  \"version\": 1,\n";
+    out << "  \"column\": \"" << column << "\",\n";
+    out << "  \"keyType\": \"" << keyType << "\",\n";
+    out << "  \"order\": " << order << ",\n";
+    out << "  \"rootPageId\": " << (root ? root->pageId : -1) << ",\n";
+    out << "  \"nextPageId\": " << (maxPageId + 1) << ",\n";
+    out << "  \"pages\": [\n";
+    
+    for (size_t i = 0; i < pages.size(); i++) {
+        out << "    " << pages[i];
+        if (i < pages.size() - 1) {
+            out << ",";
+        }
+        out << "\n";
+    }
+    
+    out << "  ]\n";
+    out << "}\n";
+    out.close();
+}
+
+bool BPlusTree::loadFromJsonFile(const std::string& path) {
+    std::ifstream in(path);
+    if (!in.is_open()) {
+        return false;
+    }
+    
+    std::stringstream buffer;
+    buffer << in.rdbuf();
+    in.close();
+    
+    std::string json = buffer.str();
+    
+    if (json.find("\"type\": \"bplus_tree_index\"") == std::string::npos &&
+        json.find("\"type\":\"bplus_tree_index\"") == std::string::npos) {
+        return false;
+    }
+    
+    size_t rootPos = json.find("\"rootPageId\":");
+    if (rootPos == std::string::npos) {
+        return false;
+    }
+    
+    int rootPageId = -1;
+    sscanf(json.c_str() + rootPos + 13, "%d", &rootPageId);
+    
+    if (rootPageId == -1) {
+        return false;
+    }
+    
+    size_t pagesStart = json.find("\"pages\":");
+    if (pagesStart == std::string::npos) {
+        return false;
+    }
+    
+    std::map<int, BPlusNode*> pageMap;
+    std::map<int, std::vector<int>> childrenMap;
+    std::map<int, int> nextLeafMap;
+    
+    size_t pos = pagesStart;
+    while ((pos = json.find("{\"pageId\":", pos)) != std::string::npos) {
+        // Extract pageId
+        size_t pageIdStart = pos + 10;
+        size_t pageIdEnd = json.find(",", pageIdStart);
+        int pageId = std::stoi(json.substr(pageIdStart, pageIdEnd - pageIdStart));
+        
+        size_t isLeafStart = json.find("\"isLeaf\":", pos) + 9;
+        bool isLeaf = json[isLeafStart] == 't';
+        
+        BPlusNode* node = new BPlusNode(isLeaf);
+        node->pageId = pageId;
+        pageMap[pageId] = node;
+        
+        size_t keysStart = json.find("\"keys\":[", pos) + 8;
+        size_t keysEnd = json.find("]", keysStart);
+        std::string keysStr = json.substr(keysStart, keysEnd - keysStart);
+        
+        size_t keyPos = 0;
+        while ((keyPos = keysStr.find("\"", keyPos)) != std::string::npos) {
+            keyPos++;
+            size_t keyEnd = keysStr.find("\"", keyPos);
+            if (keyEnd == std::string::npos) break;
+            std::string key = keysStr.substr(keyPos, keyEnd - keyPos);
+            node->keys.push_back(key);
+            keyPos = keyEnd + 1;
+        }
+        
+        if (isLeaf) {
+            size_t rowIdsStart = json.find("\"rowIds\":[", pos) + 10;
+            size_t rowIdsEnd = json.find("]", rowIdsStart);
+            std::string rowIdsStr = json.substr(rowIdsStart, rowIdsEnd - rowIdsStart);
+            
+            if (!rowIdsStr.empty()) {
+                size_t rowPos = 0;
+                while (rowPos < rowIdsStr.size()) {
+                    size_t numEnd = rowIdsStr.find(",", rowPos);
+                    if (numEnd == std::string::npos) {
+                        numEnd = rowIdsStr.size();
+                    }
+                    std::string numStr = rowIdsStr.substr(rowPos, numEnd - rowPos);
+                    numStr.erase(0, numStr.find_first_not_of(" \t\n\r"));
+                    numStr.erase(numStr.find_last_not_of(" \t\n\r") + 1);
+                    if (!numStr.empty()) {
+                        node->values.push_back(std::stoull(numStr));
+                    }
+                    rowPos = numEnd + 1;
+                }
+            }
+            
+            size_t nextLeafStart = json.find("\"nextLeafPageId\":", pos) + 17;
+            size_t nextLeafEnd = json.find("}", nextLeafStart);
+            std::string nextLeafStr = json.substr(nextLeafStart, nextLeafEnd - nextLeafStart);
+            nextLeafStr.erase(0, nextLeafStr.find_first_not_of(" \t\n\r"));
+            nextLeafStr.erase(nextLeafStr.find_last_not_of(" \t\n\r") + 1);
+            int nextLeafId = std::stoi(nextLeafStr);
+            
+            if (nextLeafId != -1) {
+                nextLeafMap[pageId] = nextLeafId;
+            }
+        } else {
+            size_t childrenStart = json.find("\"children\":[", pos) + 12;
+            size_t childrenEnd = json.find("]", childrenStart);
+            std::string childrenStr = json.substr(childrenStart, childrenEnd - childrenStart);
+            
+            if (!childrenStr.empty()) {
+                size_t childPos = 0;
+                while (childPos < childrenStr.size()) {
+                    size_t numEnd = childrenStr.find(",", childPos);
+                    if (numEnd == std::string::npos) {
+                        numEnd = childrenStr.size();
+                    }
+                    std::string numStr = childrenStr.substr(childPos, numEnd - childPos);
+                    numStr.erase(0, numStr.find_first_not_of(" \t\n\r"));
+                    numStr.erase(numStr.find_last_not_of(" \t\n\r") + 1);
+                    if (!numStr.empty()) {
+                        childrenMap[pageId].push_back(std::stoi(numStr));
+                    }
+                    childPos = numEnd + 1;
+                }
+            }
+        }
+        
+        pos = keysEnd + 1;
+    }
+    
+    if (pageMap.find(rootPageId) == pageMap.end()) {
+        // Clean up
+        for (auto& p : pageMap) {
+            delete p.second;
+        }
+        return false;
+    }
+    
+    root = pageMap[rootPageId];
+    
+    for (auto& p : childrenMap) {
+        BPlusNode* parent = pageMap[p.first];
+        for (int childId : p.second) {
+            if (pageMap.find(childId) != pageMap.end()) {
+                parent->children.push_back(pageMap[childId]);
+                pageMap[childId]->parent = parent;
+            }
+        }
+    }
+    
+    for (auto& p : nextLeafMap) {
+        BPlusNode* leaf = pageMap[p.first];
+        if (pageMap.find(p.second) != pageMap.end()) {
+            leaf->next = pageMap[p.second];
+        }
+    }
+    
+    return true;
+}
+
+int BPlusTree::getMaxPageId() const {
+    int maxId = 0;
+    
+    if (!root) return maxId;
+    
+    std::vector<BPlusNode*> queue;
+    queue.push_back(root);
+    
+    while (!queue.empty()) {
+        BPlusNode* node = queue.front();
+        queue.erase(queue.begin());
+        
+        maxId = std::max(maxId, node->pageId);
+        
+        if (!node->isLeaf) {
+            for (auto child : node->children) {
+                queue.push_back(child);
+            }
+        }
+    }
+    
+    return maxId;
 }

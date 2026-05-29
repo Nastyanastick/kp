@@ -619,9 +619,7 @@ void insertFromAST(const sql::InsertCmd& cmd) {
     saveDataWithPool(tablePath, allRows, pool, schema);
     pool.save(tablePath + "/string_pool.txt");
 
-    IndexManager newIndexManager;
-    newIndexManager.buildIndexes(tablePath, schema);
-    newIndexManager.saveIndexes();
+    indexManager.saveIndexes();
 
     std::cout << rowsToInsert.size() << " row(s) inserted\n";
 }
