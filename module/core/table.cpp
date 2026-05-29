@@ -538,8 +538,23 @@ void insertFromAST(const sql::InsertCmd& cmd) {
         return;
     }
 
+    auto existingRows = loadDataWithPool(tablePath, pool);
+    size_t firstNewRowId = existingRows.size();
+
     IndexManager indexManager;
-    indexManager.buildIndexes(tablePath, schema);
+    indexManager.loadIndexes(tablePath, schema);
+
+    bool needBuildIndexes = false;
+    for (const auto& col : schema) {
+        if (col.indexed && !indexManager.hasIndex(col.name)) {
+            needBuildIndexes = true;
+            break;
+        }
+    }
+
+    if (needBuildIndexes) {
+        indexManager.buildIndexes(tablePath, schema);
+    }
 
     std::vector<std::vector<std::string>> rowsToInsert;
     std::set<std::string> batchIndexedValues;
@@ -615,8 +630,6 @@ void insertFromAST(const sql::InsertCmd& cmd) {
         rowsToInsert.push_back(row);
     }
 
-    auto existingRows = loadDataWithPool(tablePath, pool);
-
     std::vector<std::vector<std::string>> allRows = existingRows;
 
     for (const auto& row : rowsToInsert) {
@@ -626,11 +639,20 @@ void insertFromAST(const sql::InsertCmd& cmd) {
     saveDataWithPool(tablePath, allRows, pool, schema);
     pool.save(tablePath + "/string_pool.txt");
 
+    for (size_t r = 0; r < rowsToInsert.size(); r++) {
+        size_t rowId = firstNewRowId + r;
+
+        for (size_t col = 0; col < schema.size(); col++) {
+            if (schema[col].indexed) {
+                indexManager.insertKey(schema[col].name, rowsToInsert[r][col], rowId);
+            }
+        }
+    }
+
     indexManager.saveIndexes();
 
     std::cout << rowsToInsert.size() << " row(s) inserted\n";
 }
-
 
 void deleteFromAST(const sql::DeleteCmd& cmd) {
     std::string tablePath = resolveTablePath(cmd.tableName);
@@ -730,7 +752,6 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
                 std::cout << "Error: string value is too long for column " << colName << "\n";
                 return;
             }
-        
         }
 
         setIndexes.push_back(colIndex);
@@ -742,7 +763,9 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
         return;
     }
 
+    std::vector<std::vector<std::string>> oldRows = rows;
     std::vector<std::vector<std::string>> newRows = rows;
+    std::vector<size_t> updatedRowIds;
     int updatedCount = 0;
 
     for (size_t r = 0; r < newRows.size(); r++) {
@@ -759,6 +782,7 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
             for (size_t i = 0; i < setIndexes.size(); i++) {
                 newRows[r][setIndexes[i]] = setValues[i];
             }
+            updatedRowIds.push_back(r);
             updatedCount++;
         }
     }
@@ -787,11 +811,65 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
         }
     }
 
+    IndexManager indexManager;
+    indexManager.loadIndexes(tablePath, schema);
+
+    bool needBuildIndexes = false;
+    for (const auto& col : schema) {
+        if (col.indexed && !indexManager.hasIndex(col.name)) {
+            needBuildIndexes = true;
+            break;
+        }
+    }
+
+    if (needBuildIndexes) {
+        indexManager.buildIndexes(tablePath, schema);
+    }
+
     saveDataWithPool(tablePath, newRows, pool, schema);
     pool.save(tablePath + "/string_pool.txt");
 
-    IndexManager indexManager;
-    indexManager.buildIndexes(tablePath, schema);
+    // UPDATE не меняет количество строк, поэтому rowId не сдвигаются
+    std::string pureTableName = getPureTableName(cmd.tableName);
+
+    for (size_t rowId : updatedRowIds) {
+        for (size_t col = 0; col < schema.size(); col++) {
+            if (!schema[col].indexed) {
+                continue;
+            }
+
+            std::string oldValue = oldRows[rowId][col];
+            std::string newValue = newRows[rowId][col];
+
+            if (oldValue == newValue) {
+                continue;
+            }
+
+            Value oldIndexValue;
+            oldIndexValue.isNull = false;
+            if (schema[col].type == "int") {
+                oldIndexValue.type = Value::INT;
+                oldIndexValue.intValue = std::stoi(oldValue);
+            } else {
+                oldIndexValue.type = Value::STRING;
+                oldIndexValue.stringValue = oldValue;
+            }
+
+            Value newIndexValue;
+            newIndexValue.isNull = false;
+            if (schema[col].type == "int") {
+                newIndexValue.type = Value::INT;
+                newIndexValue.intValue = std::stoi(newValue);
+            } else {
+                newIndexValue.type = Value::STRING;
+                newIndexValue.stringValue = newValue;
+            }
+
+            indexManager.deleteKey(pureTableName, schema[col].name, oldIndexValue);
+            indexManager.insertKey(pureTableName, schema[col].name, newIndexValue, rowId);
+        }
+    }
+
     indexManager.saveIndexes();
 
     std::cout << updatedCount << " row(s) updated\n";
