@@ -794,8 +794,7 @@ void selectFromAST(const sql::SelectCmd& cmd) {
     auto rows = loadDataWithPool(tablePath, pool);
 
     IndexManager indexManager;
-    indexManager.buildIndexes(tablePath, schema);
-    indexManager.saveIndexes();
+    indexManager.loadIndexes(tablePath, schema); // загрузить все индексы из таблицы
 
     bool useIndex = false;
     std::set<size_t> indexedRowIds;

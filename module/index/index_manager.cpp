@@ -280,9 +280,6 @@ void IndexManager::loadIndexes(
             continue;
         }
 
-        indexes[activeTable][col.name] =
-            new BPlusTree(order, col.type);
-
         std::string idxPath = (tablePath / (col.name + ".idx")).string();
         std::ifstream in(idxPath);
 
@@ -290,7 +287,10 @@ void IndexManager::loadIndexes(
             continue;
         }
 
-        if (indexes[activeTable][col.name]->loadFromJsonFile(idxPath)) {
+        BPlusTree* tree = new BPlusTree(order, col.type);
+
+        if (tree->loadFromJsonFile(idxPath)) {
+            indexes[activeTable][col.name] = tree;
             continue;
         }
 
@@ -298,6 +298,7 @@ void IndexManager::loadIndexes(
         in.seekg(0);
 
         std::string line;
+        bool loadedAnyKey = false;
         while (std::getline(in, line)) {
             size_t sep = line.find('|');
 
@@ -308,7 +309,15 @@ void IndexManager::loadIndexes(
             std::string key = line.substr(0, sep);
             size_t rowId = static_cast<size_t>(std::stoull(line.substr(sep + 1)));
 
-            indexes[activeTable][col.name]->insert(key, rowId);
+            if (tree->insert(key, rowId)) {
+                loadedAnyKey = true;
+            }
+        }
+
+        if (loadedAnyKey) {
+            indexes[activeTable][col.name] = tree;
+        } else {
+            delete tree;
         }
     }
 }
