@@ -28,6 +28,9 @@ SELECT * FROM users
 WHERE age >= 25 AND city == "Moscow";
 
 SELECT * FROM users
+WHERE 25 <= age AND city == "Moscow";
+
+SELECT * FROM users
 WHERE city == "Moscow" OR city == "Kazan";
 
 SELECT * FROM users
@@ -92,6 +95,8 @@ INSERT INTO users VALUES (9, "BadAge", "abc", "Moscow", "user");
 SELECT unknown_column FROM users;
 
 UPDATE users SET id = 1 WHERE name == "Boris";
+
+SELECT * FROM users WHERE "Anna" == name;
 
 DROP TABLE users;
 DROP DATABASE demo;

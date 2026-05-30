@@ -256,6 +256,9 @@ compare_value:
 
   | NULL_TOKEN
         { $$ = strdup("NULL"); }
+
+  | IDENTIFIER
+        { $$ = $1; }
   ;
 
 assign_value:
@@ -389,60 +392,60 @@ primary_expr:
   ;
 
 comparison_expr:
-    IDENTIFIER BETWEEN compare_value AND compare_value
+    compare_value BETWEEN compare_value AND compare_value
         {
             $$ = new ConditionNode($1, "BETWEEN", $3 ? $3 : "", $5 ? $5 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
             if ($5) free($5);
         }
 
-  | IDENTIFIER LIKE compare_value
+  | compare_value LIKE compare_value
         {
             $$ = new ConditionNode($1, "LIKE", $3 ? $3 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
         }
 
-  | IDENTIFIER EQ compare_value
+  | compare_value EQ compare_value
         {
             $$ = new ConditionNode($1, "==", $3 ? $3 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
         }
 
-  | IDENTIFIER NEQ compare_value
+  | compare_value NEQ compare_value
         {
             $$ = new ConditionNode($1, "!=", $3 ? $3 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
         }
 
-  | IDENTIFIER LE compare_value
+  | compare_value LE compare_value
         {
             $$ = new ConditionNode($1, "<=", $3 ? $3 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
         }
 
-  | IDENTIFIER GE compare_value
+  | compare_value GE compare_value
         {
             $$ = new ConditionNode($1, ">=", $3 ? $3 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
         }
 
-  | IDENTIFIER LT compare_value
+  | compare_value LT compare_value
         {
             $$ = new ConditionNode($1, "<", $3 ? $3 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
         }
 
-  | IDENTIFIER GT compare_value
+  | compare_value GT compare_value
         {
             $$ = new ConditionNode($1, ">", $3 ? $3 : "");
-            free($1);
+            if ($1) free($1);
             if ($3) free($3);
         }
   ;

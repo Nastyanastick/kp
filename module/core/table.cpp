@@ -185,38 +185,54 @@ bool evaluateComparison(
     }
     
     if (cond.op == "BETWEEN") {
+        std::string rightValue, rightType;
+        if (!getOperandValue(cond.right, row, schema, rightValue, rightType, error)) {
+            return false;
+        }
+
+        std::string right2Value, right2Type;
+        if (!getOperandValue(cond.right2, row, schema, right2Value, right2Type, error)) {
+            return false;
+        }
+
+        if (leftType != rightType || leftType != right2Type) {
+            error = "type mismatch in BETWEEN";
+            return false;
+        }
+
         if (leftType == "int") {
-            if (!isIntegerValue(cond.right) || !isIntegerValue(cond.right2)) {
+            if (!isIntegerValue(leftValue) || !isIntegerValue(rightValue) || !isIntegerValue(right2Value)) {
                 error = "BETWEEN requires int bounds";
                 return false;
             }
             int value = std::stoi(leftValue);
-            int l = std::stoi(cond.right);
-            int r = std::stoi(cond.right2);
+            int l = std::stoi(rightValue);
+            int r = std::stoi(right2Value);
             return value >= l && value < r;
         }
+
         if (leftType == "string") {
-            if (!isStringLiteral(cond.right) || !isStringLiteral(cond.right2)) {
-                error = "BETWEEN requires string bounds";
-                return false;
-            }
-            std::string l = cond.right.substr(1, cond.right.size() - 2);
-            std::string r = cond.right2.substr(1, cond.right2.size() - 2);
+            std::string l = rightValue;
+            std::string r = right2Value;
             return leftValue >= l && leftValue < r;
         }
+
         error = "BETWEEN on unsupported type";
         return false;
     }
     
     if (cond.op == "LIKE") {
-        if (leftType != "string") {
+        std::string rightValue, rightType;
+        if (!getOperandValue(cond.right, row, schema, rightValue, rightType, error)) {
+            return false;
+        }
+
+        if (leftType != "string" || rightType != "string") {
             error = "LIKE works only with strings";
             return false;
         }
-        std::string pattern = cond.right;
-        if (isStringLiteral(pattern)) {
-            pattern = pattern.substr(1, pattern.size() - 2);
-        }
+
+        std::string pattern = rightValue;
         std::string regexPattern;
         for (char ch : pattern) {
             if (ch == '%') {
