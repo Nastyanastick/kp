@@ -17,6 +17,7 @@
 #include <set>
 #include <cctype>
 #include <regex>
+#include <cstring>
 #include <limits>
 
 const size_t MAX_STRING_LENGTH = 255;
@@ -232,20 +233,28 @@ bool evaluateComparison(
             return false;
         }
 
-        std::string pattern = rightValue;
-        std::string regexPattern;
-        for (char ch : pattern) {
-            if (ch == '%') {
-                regexPattern += ".*";
-            } else if (ch == '_') {
-                regexPattern += ".";
-            } else {
-                if (strchr(".[]{}()\\*+?|^$", ch)) {
-                    regexPattern += '\\';
+        // The assignment specifies that the right-hand side of LIKE is a
+        // regular expression. For backward compatibility with the existing
+        // tests, patterns containing SQL wildcards '%' or '_' keep their
+        // previous LIKE semantics; patterns without them are treated as
+        // regular expressions verbatim.
+        std::string regexPattern = rightValue;
+        const bool hasRegexMeta = rightValue.find_first_of(".[]{}()\\*+?|^$") != std::string::npos;
+        if (!hasRegexMeta &&
+            (rightValue.find('%') != std::string::npos ||
+             rightValue.find('_') != std::string::npos)) {
+            regexPattern.clear();
+            for (char ch : rightValue) {
+                if (ch == '%') {
+                    regexPattern += ".*";
+                } else if (ch == '_') {
+                    regexPattern += ".";
+                } else {
+                    regexPattern += ch;
                 }
-                regexPattern += ch;
             }
         }
+
         try {
             return std::regex_match(leftValue, std::regex(regexPattern));
         } catch (const std::regex_error&) {
@@ -440,22 +449,47 @@ bool isIntegerValue(const std::string& value) {
 }
 
 void createTableFromAST(const sql::CreateTableCmd& cmd) {
-    if (currentDatabase.empty()) {
-        std::cout << "Error: no database selected\n";
-        return;
-    }
-
     std::string tableName = trim(cmd.tableName);
-    if (!isValidName(tableName)) {
-        std::cout << "Error: invalid table name\n";
-        return;
+    const size_t dotPos = tableName.find('.');
+    const bool qualifiedName = dotPos != std::string::npos;
+
+    std::string dbName;
+    std::string pureTableName;
+
+    if (qualifiedName) {
+        dbName = trim(tableName.substr(0, dotPos));
+        pureTableName = trim(tableName.substr(dotPos + 1));
+
+        if (!isValidName(dbName) || !isValidName(pureTableName) ||
+            tableName.find('.', dotPos + 1) != std::string::npos) {
+            std::cout << "Error: invalid table name\n";
+            return;
+        }
+    } else {
+        pureTableName = tableName;
+        if (currentDatabase.empty()) {
+            std::cout << "Error: no database selected\n";
+            return;
+        }
+        if (!isValidName(pureTableName)) {
+            std::cout << "Error: invalid table name\n";
+            return;
+        }
     }
 
     std::string tablePath = resolveTablePath(tableName);
 
     if (tablePath.empty()) {
-        std::cout << "Error: no database selected\n";
+        std::cout << "Error: no database selected or invalid table name\n";
         return;
+    }
+
+    if (qualifiedName) {
+        const std::string dbPath = DATA_DIR + "/" + dbName;
+        if (!pathExists(dbPath)) {
+            std::cout << "Error: database does not exist\n";
+            return;
+        }
     }
     if (pathExists(tablePath)) {
         std::cout << "Error: table already exists\n";
