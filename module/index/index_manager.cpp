@@ -22,6 +22,14 @@ void IndexManager::createIndex(const std::string& table,
     if (indexes[table].count(column) == 0) {
         indexes[table][column] = new BPlusTree(order, type);
     }
+
+    // IMPORTANT: the B+ tree itself is disk-backed. Only page IDs/metadata
+    // stay in IndexManager; nodes are loaded on demand from this file.
+    if (!activeTablePath.empty() && table == activeTable) {
+        const std::filesystem::path idxPath =
+            std::filesystem::path(activeTablePath) / (column + ".idx");
+        indexes[table][column]->setStoragePath(idxPath.string(), column);
+    }
 }
 
 void IndexManager::insertKey(const std::string& table,
@@ -31,7 +39,7 @@ void IndexManager::insertKey(const std::string& table,
 {
     if (!hasIndex(table, column)) return;
 
-    std::string key = valueToKey(value);
+    const std::string key = valueToKey(value);
     indexes[table][column]->insert(key, rowId);
 }
 
@@ -41,7 +49,7 @@ void IndexManager::deleteKey(const std::string& table,
 {
     if (!hasIndex(table, column)) return;
 
-    std::string key = valueToKey(value);
+    const std::string key = valueToKey(value);
     indexes[table][column]->remove(key);
 }
 
@@ -51,7 +59,7 @@ std::vector<size_t> IndexManager::find(const std::string& table,
 {
     if (!hasIndex(table, column)) return {};
 
-    std::string key = valueToKey(value);
+    const std::string key = valueToKey(value);
     return indexes[table][column]->searchAll(key);
 }
 
@@ -82,11 +90,9 @@ void IndexManager::saveIndex(const std::string& table,
                              const std::string& path)
 {
     if (!hasIndex(table, column)) return;
-
     BPlusTree* tree = indexes[table][column];
     tree->saveToJsonFile(path, column);
 }
-
 
 void IndexManager::loadIndex(const std::string& table,
                              const std::string& column,
@@ -94,6 +100,7 @@ void IndexManager::loadIndex(const std::string& table,
                              const std::string& path)
 {
     createIndex(table, column, type);
+    indexes[table][column]->setStoragePath(path, column);
 
     std::ifstream in(path);
     if (!in.is_open()) return;
@@ -101,26 +108,26 @@ void IndexManager::loadIndex(const std::string& table,
     std::string firstLine;
     std::getline(in, firstLine);
     in.close();
-
-    if (firstLine.find("{") != std::string::npos || 
+    if (firstLine.find("{") != std::string::npos ||
         firstLine.find("\"type\"") != std::string::npos) {
-        // It's JSON format
+        // Current format: the .idx file contains only metadata; the actual
+        // B+ tree pages live in <column>.idx.pages and are read lazily.
         if (indexes[table][column]->loadFromJsonFile(path)) {
+            indexes[table][column]->setStoragePath(path, column);
             return;
         }
     }
 
+    // Legacy text fallback. Each insert writes only the affected page to disk.
     in.open(path);
     if (!in.is_open()) return;
 
     std::string line;
     while (std::getline(in, line)) {
-        size_t pos = line.find('|');
+        const size_t pos = line.find('|');
         if (pos == std::string::npos) continue;
-
-        std::string key = line.substr(0, pos);
-        size_t rowId = std::stoull(line.substr(pos + 1));
-
+        const std::string key = line.substr(0, pos);
+        const size_t rowId = std::stoull(line.substr(pos + 1));
         indexes[table][column]->insert(key, rowId);
     }
 }
@@ -135,7 +142,6 @@ Value IndexManager::makeValue(const std::string& raw, const std::string& type) c
     }
 
     v.isNull = false;
-
     if (type == "int") {
         v.type = Value::INT;
         v.intValue = std::stoi(raw);
@@ -151,7 +157,6 @@ void IndexManager::buildIndexes(const std::filesystem::path& tablePath,
                                 const std::vector<Column>& schema) {
     activeTable = tablePath.filename().string();
     activeTablePath = tablePath.string();
-
     for (const auto& col : schema) {
         if (col.indexed) {
             createIndex(activeTable, col.name, col.type);
@@ -169,7 +174,6 @@ void IndexManager::buildIndexes(const std::filesystem::path& tablePath,
     while (std::getline(in, line)) {
         std::vector<std::string> values;
         std::string current;
-
         for (char ch : line) {
             if (ch == '|') {
                 values.push_back(current);
@@ -180,7 +184,6 @@ void IndexManager::buildIndexes(const std::filesystem::path& tablePath,
         }
 
         values.push_back(current);
-
         for (size_t i = 0; i < schema.size() && i < values.size(); i++) {
             if (schema[i].indexed) {
                 Value v = makeValue(values[i], schema[i].type);
@@ -202,7 +205,7 @@ bool IndexManager::checkUnique(const std::string& column,
         return true;
     }
 
-    std::string key = rawValue;
+    const std::string key = rawValue;
 
     auto itTable = indexes.find(activeTable);
     if (itTable == indexes.end()) {
@@ -213,7 +216,6 @@ bool IndexManager::checkUnique(const std::string& column,
     if (itCol == itTable->second.end()) {
         return true;
     }
-
     size_t dummy;
     return !itCol->second->search(key, dummy);
 }
@@ -225,8 +227,7 @@ bool IndexManager::findRowId(const std::string& column,
         return false;
     }
 
-    auto result = indexes[activeTable][column]->searchAll(rawValue);
-
+    const std::vector<size_t> result = indexes[activeTable][column]->searchAll(rawValue);
     if (result.empty()) {
         return false;
     }
@@ -253,10 +254,8 @@ std::vector<size_t> IndexManager::findRange(
     if (!hasIndex(activeTable, column)) {
         return {};
     }
-
     return indexes[activeTable][column]->rangeSearch(left, right);
 }
-
 
 void IndexManager::shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds) {
     if (deletedRowIds.empty()) {
@@ -268,7 +267,8 @@ void IndexManager::shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRow
         return;
     }
 
-    for (auto& [column, tree] : itTable->second) {
+    for (auto& entry : itTable->second) {
+        BPlusTree* tree = entry.second;
         if (tree) {
             tree->shiftRowIdsAfterDeleted(deletedRowIds);
         }
@@ -278,8 +278,10 @@ void IndexManager::shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRow
 void IndexManager::saveIndexes() {
     std::filesystem::path dir = activeTablePath;
 
-    for (const auto& [column, tree] : indexes[activeTable]) {
-        std::string idxPath = (dir / (column + ".idx")).string();
+    for (const auto& entry : indexes[activeTable]) {
+        const std::string& column = entry.first;
+        BPlusTree* tree = entry.second;
+        const std::string idxPath = (dir / (column + ".idx")).string();
         tree->saveToJsonFile(idxPath, column);
     }
 }
@@ -290,7 +292,6 @@ void IndexManager::loadIndexes(
 ) {
     activeTable = tablePath.filename().string();
     activeTablePath = tablePath.string();
-
     indexes[activeTable].clear();
 
     for (const auto& col : schema) {
@@ -298,44 +299,44 @@ void IndexManager::loadIndexes(
             continue;
         }
 
-        std::string idxPath = (tablePath / (col.name + ".idx")).string();
+        const std::string idxPath = (tablePath / (col.name + ".idx")).string();
         std::ifstream in(idxPath);
 
-        if (!in.is_open()) {
-            continue;
-        }
-
         BPlusTree* tree = new BPlusTree(order, col.type);
+        tree->setStoragePath(idxPath, col.name);
 
-        if (tree->loadFromJsonFile(idxPath)) {
-            indexes[activeTable][col.name] = tree;
-            continue;
-        }
-
-        in.clear();
-        in.seekg(0);
-
-        std::string line;
-        bool loadedAnyKey = false;
-        while (std::getline(in, line)) {
-            size_t sep = line.find('|');
-
-            if (sep == std::string::npos) {
+        if (in.is_open()) {
+            if (tree->loadFromJsonFile(idxPath)) {
+                tree->setStoragePath(idxPath, col.name);
+                indexes[activeTable][col.name] = tree;
                 continue;
             }
 
-            std::string key = line.substr(0, sep);
-            size_t rowId = static_cast<size_t>(std::stoull(line.substr(sep + 1)));
+            in.clear();
+            in.seekg(0);
+            std::string line;
+            bool loadedAnyKey = false;
+            while (std::getline(in, line)) {
+                const size_t sep = line.find('|');
+                if (sep == std::string::npos) {
+                    continue;
+                }
 
-            if (tree->insert(key, rowId)) {
-                loadedAnyKey = true;
+                const std::string key = line.substr(0, sep);
+                const size_t rowId = static_cast<size_t>(std::stoull(line.substr(sep + 1)));
+
+                if (tree->insert(key, rowId)) {
+                    loadedAnyKey = true;
+                }
+            }
+            if (loadedAnyKey) {
+                indexes[activeTable][col.name] = tree;
+                continue;
             }
         }
 
-        if (loadedAnyKey) {
-            indexes[activeTable][col.name] = tree;
-        } else {
-            delete tree;
-        }
+        // No persisted index yet: still keep the empty disk-backed tree so
+        // subsequent INSERT operations work without an in-memory tree.
+        indexes[activeTable][col.name] = tree;
     }
 }
