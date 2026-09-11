@@ -4,6 +4,7 @@
 #include "../index/index_manager.h"
 #include "../memory/string_pool.h"
 #include "../parser/sql_ast.h"
+#include "table_storage.h"
 
 #include <iostream>
 #include <fstream>
@@ -558,13 +559,17 @@ void insertFromAST(const sql::InsertCmd& cmd) {
     }
 
     std::set<std::string> usedColumns;
+
     for (const auto& colName : insertColumns) {
         if (usedColumns.count(colName)) {
-            std::cout << "Error: duplicate column in INSERT: " << colName << "\n";
+            std::cout
+                << "Error: duplicate column in INSERT: "
+                << colName << "\n";
             return;
         }
 
         bool found = false;
+
         for (const auto& col : schema) {
             if (col.name == colName) {
                 found = true;
@@ -573,80 +578,127 @@ void insertFromAST(const sql::InsertCmd& cmd) {
         }
 
         if (!found) {
-            std::cout << "Error: unknown column " << colName << "\n";
+            std::cout
+                << "Error: unknown column "
+                << colName << "\n";
             return;
         }
 
         usedColumns.insert(colName);
     }
 
-    StringPool pool;
-    pool.load(tablePath + "/string_pool.txt");
-
     if (cmd.rows.empty()) {
         std::cout << "Error: invalid VALUES list\n";
         return;
     }
 
-    auto existingRows = loadDataWithPool(tablePath, pool);
-    size_t firstNewRowId = existingRows.size();
+    StringPool pool;
+    pool.load(tablePath + "/string_pool.txt");
 
     IndexManager indexManager;
-    indexManager.loadIndexes(tablePath, schema);
+    indexManager.loadIndexes(
+        tablePath,
+        schema
+    );
 
     bool needBuildIndexes = false;
+
     for (const auto& col : schema) {
-        if (col.indexed && !indexManager.hasIndex(col.name)) {
+        if (col.indexed &&
+            !indexManager.hasIndex(col.name)) {
+
             needBuildIndexes = true;
             break;
         }
     }
 
     if (needBuildIndexes) {
-        indexManager.buildIndexes(tablePath, schema);
+        indexManager.buildIndexes(
+            tablePath,
+            schema
+        );
     }
 
-    std::vector<std::vector<std::string>> rowsToInsert;
+    TableStorage storage(tablePath);
+
+    if (!storage.exists()) {
+        if (!storage.create()) {
+            std::cout
+                << "Error: cannot create table storage\n";
+            return;
+        }
+    }
+
     std::set<std::string> batchIndexedValues;
+
+    std::vector<std::vector<std::string>> rowsToInsert;
 
     for (const auto& rowVals : cmd.rows) {
         if (rowVals.size() != insertColumns.size()) {
-            std::cout << "Error: columns and values count mismatch\n";
+            std::cout
+                << "Error: columns and values count mismatch\n";
             return;
         }
 
-        std::vector<std::string> row(schema.size(), "NULL");
+        std::vector<std::string> row(
+            schema.size(),
+            "NULL"
+        );
 
-        for (size_t i = 0; i < insertColumns.size(); i++) {
-            std::string colName = trim(insertColumns[i]);
-            std::string val = trim(rowVals[i]);
+        for (size_t i = 0;
+             i < insertColumns.size();
+             i++) {
+
+            std::string colName =
+                trim(insertColumns[i]);
+
+            std::string val =
+                trim(rowVals[i]);
 
             int colIndex = -1;
-            for (size_t j = 0; j < schema.size(); j++) {
+
+            for (size_t j = 0;
+                 j < schema.size();
+                 j++) {
+
                 if (schema[j].name == colName) {
-                    colIndex = static_cast<int>(j);
+                    colIndex =
+                        static_cast<int>(j);
                     break;
                 }
             }
 
             if (colIndex == -1) {
-                std::cout << "Error: unknown column " << colName << "\n";
+                std::cout
+                    << "Error: unknown column "
+                    << colName << "\n";
                 return;
             }
 
             if (val == "NULL") {
-                if (schema[colIndex].notNull || schema[colIndex].indexed) {
-                    std::cout << "Error: NULL in NOT_NULL/INDEXED column " << colName << "\n";
+                if (schema[colIndex].notNull ||
+                    schema[colIndex].indexed) {
+
+                    std::cout
+                        << "Error: NULL in NOT_NULL/INDEXED column "
+                        << colName << "\n";
+
                     return;
                 }
-            } else if (schema[colIndex].type == "int") {
+            }
+            else if (schema[colIndex].type == "int") {
                 if (!isIntegerValue(val)) {
-                    std::cout << "Error: expected int for " << colName << "\n";
+                    std::cout
+                        << "Error: expected int for "
+                        << colName << "\n";
                     return;
                 }
-            } else if (schema[colIndex].type == "string") {
+            }
+            else if (schema[colIndex].type == "string") {
                 if (val.size() > MAX_STRING_LENGTH) {
-                    std::cout << "Error: string value is too long for column " << colName << "\n";
+                    std::cout
+                        << "Error: string value is too long for column "
+                        << colName << "\n";
                     return;
                 }
             }
@@ -654,22 +706,41 @@ void insertFromAST(const sql::InsertCmd& cmd) {
             row[colIndex] = val;
         }
 
-        for (size_t i = 0; i < schema.size(); i++) {
-            if ((schema[i].notNull || schema[i].indexed) && row[i] == "NULL") {
-                std::cout << "Error: NULL in NOT_NULL/INDEXED column " << schema[i].name << "\n";
+        for (size_t i = 0;
+             i < schema.size();
+             i++) {
+
+            if ((schema[i].notNull ||
+                 schema[i].indexed) &&
+                row[i] == "NULL") {
+
+                std::cout
+                    << "Error: NULL in NOT_NULL/INDEXED column "
+                    << schema[i].name << "\n";
+
                 return;
             }
 
             if (schema[i].indexed) {
-                std::string key = schema[i].name + "|" + row[i];
+                std::string key =
+                    schema[i].name + "|" + row[i];
 
-                if (!indexManager.checkUnique(schema[i].name, row[i])) {
-                    std::cout << "Error: duplicate value for INDEXED column " << schema[i].name << "\n";
+                if (!indexManager.checkUnique(
+                        schema[i].name,
+                        row[i])) {
+
+                    std::cout
+                        << "Error: duplicate value for INDEXED column "
+                        << schema[i].name << "\n";
+
                     return;
                 }
 
                 if (batchIndexedValues.count(key)) {
-                    std::cout << "Error: duplicate value for INDEXED column " << schema[i].name << "\n";
+                    std::cout
+                        << "Error: duplicate value for INDEXED column "
+                        << schema[i].name << "\n";
+
                     return;
                 }
 
@@ -680,93 +751,50 @@ void insertFromAST(const sql::InsertCmd& cmd) {
         rowsToInsert.push_back(row);
     }
 
-    std::vector<std::vector<std::string>> allRows = existingRows;
+    std::vector<RecordID> insertedRecordIds;
 
     for (const auto& row : rowsToInsert) {
-        allRows.push_back(row);
-    }
+        std::string record;
 
-    saveDataWithPool(tablePath, allRows, pool, schema);
-    pool.save(tablePath + "/string_pool.txt");
+        for (size_t i = 0;
+             i < row.size();
+             i++) {
 
-    for (size_t r = 0; r < rowsToInsert.size(); r++) {
-        size_t rowId = firstNewRowId + r;
+            if (i > 0) {
+                record += "|";
+            }
 
-        for (size_t col = 0; col < schema.size(); col++) {
-            if (schema[col].indexed) {
-                indexManager.insertKey(schema[col].name, rowsToInsert[r][col], rowId);
+            if (row[i] == "NULL") {
+                record += "NULL";
+            }
+            else if (schema[i].type == "string") {
+                const std::size_t poolId =
+                    pool.intern(row[i]);
+
+                record +=
+                    "pool:" +
+                    std::to_string(poolId);
+            }
+            else {
+                record += row[i];
             }
         }
-    }
 
-    indexManager.saveIndexes();
+        RecordID recordId =
+            storage.insertRecord(record);
 
-    std::cout << rowsToInsert.size() << " row(s) inserted\n";
-}
-
-void deleteFromAST(const sql::DeleteCmd& cmd) {
-    std::string tablePath = resolveTablePath(cmd.tableName);
-
-    if (tablePath.empty() || !pathExists(tablePath)) {
-        std::cout << "Error: table does not exist\n";
-        return;
-    }
-
-    auto schema = loadSchema(tablePath);
-    StringPool pool;
-    pool.load(tablePath + "/string_pool.txt");
-    auto rows = loadDataWithPool(tablePath, pool);
-
-    if (!cmd.where) {
-        std::cout << "Error: DELETE requires WHERE\n";
-        return;
-    }
-
-    std::vector<std::vector<std::string>> remainingRows;
-    std::vector<size_t> deletedRowIds;
-    std::vector<std::vector<std::string>> deletedRows;
-
-    for (size_t rowId = 0; rowId < rows.size(); rowId++) {
-        std::string matchError;
-        bool matched = rowMatchesCondition(rows[rowId], schema, (const ConditionNode*)cmd.where, matchError);
-
-        if (!matchError.empty()) {
-            std::cout << "Error: " << matchError << "\n";
+        if (!recordId.isValid()) {
+            std::cout
+                << "Error: failed to insert record\n";
             return;
         }
 
-        if (matched) {
-            deletedRowIds.push_back(rowId);
-            deletedRows.push_back(rows[rowId]);
-        } else {
-            remainingRows.push_back(rows[rowId]);
-        }
-    }
+        insertedRecordIds.push_back(recordId);
 
-    if (deletedRowIds.empty()) {
-        std::cout << "0 row(s) deleted\n";
-        return;
-    }
+        for (size_t col = 0;
+             col < schema.size();
+             col++) {
 
-    IndexManager indexManager;
-    indexManager.loadIndexes(tablePath, schema);
-
-    bool needBuildIndexes = false;
-    for (const auto& col : schema) {
-        if (col.indexed && !indexManager.hasIndex(col.name)) {
-            needBuildIndexes = true;
-            break;
-        }
-    }
-
-    if (needBuildIndexes) {
-        indexManager.buildIndexes(tablePath, schema);
-    }
-
-    std::string pureTableName = getPureTableName(cmd.tableName);
-
-    for (const auto& deletedRow : deletedRows) {
-        for (size_t col = 0; col < schema.size(); col++) {
             if (!schema[col].indexed) {
                 continue;
             }
@@ -776,76 +804,306 @@ void deleteFromAST(const sql::DeleteCmd& cmd) {
 
             if (schema[col].type == "int") {
                 indexValue.type = Value::INT;
-                indexValue.intValue = std::stoi(deletedRow[col]);
-            } else {
+                indexValue.intValue =
+                    std::stoi(row[col]);
+            }
+            else {
                 indexValue.type = Value::STRING;
-                indexValue.stringValue = deletedRow[col];
+                indexValue.stringValue =
+                    row[col];
             }
 
-            indexManager.deleteKey(pureTableName, schema[col].name, indexValue);
+            indexManager.insertKey(
+                getPureTableName(cmd.tableName),
+                schema[col].name,
+                indexValue,
+                recordId
+            );
         }
     }
 
-    indexManager.shiftRowIdsAfterDeleted(deletedRowIds);
-
-    saveDataWithPool(tablePath, remainingRows, pool, schema);
-    pool.save(tablePath + "/string_pool.txt");
+    pool.save(
+        tablePath + "/string_pool.txt"
+    );
 
     indexManager.saveIndexes();
 
-    std::cout << deletedRowIds.size() << " row(s) deleted\n";
+    std::cout
+        << rowsToInsert.size()
+        << " row(s) inserted\n";
 }
 
+void deleteFromAST(const sql::DeleteCmd& cmd) {
+    std::string tablePath =
+        resolveTablePath(cmd.tableName);
 
-void updateFromAST(const sql::UpdateCmd& cmd) {
-    std::string tablePath = resolveTablePath(cmd.tableName);
+    if (tablePath.empty() ||
+        !pathExists(tablePath)) {
 
-    if (tablePath.empty() || !pathExists(tablePath)) {
-        std::cout << "Error: table does not exist\n";
+        std::cout
+            << "Error: table does not exist\n";
+        return;
+    }
+
+    if (!cmd.where) {
+        std::cout
+            << "Error: DELETE requires WHERE\n";
         return;
     }
 
     auto schema = loadSchema(tablePath);
 
     StringPool pool;
-    pool.load(tablePath + "/string_pool.txt");
+    pool.load(
+        tablePath + "/string_pool.txt"
+    );
 
-    auto rows = loadDataWithPool(tablePath, pool);
+    TableStorage storage(tablePath);
+
+    if (!storage.exists()) {
+        std::cout
+            << "0 row(s) deleted\n";
+        return;
+    }
+
+    IndexManager indexManager;
+
+    indexManager.loadIndexes(
+        tablePath,
+        schema
+    );
+
+    bool needBuildIndexes = false;
+
+    for (const auto& col : schema) {
+        if (col.indexed &&
+            !indexManager.hasIndex(col.name)) {
+
+            needBuildIndexes = true;
+            break;
+        }
+    }
+
+    if (needBuildIndexes) {
+        indexManager.buildIndexes(
+            tablePath,
+            schema
+        );
+    }
+
+    std::vector<RecordID> recordIds =
+        storage.getAllRecordIds();
+
+    std::string pureTableName =
+        getPureTableName(cmd.tableName);
+
+    std::vector<RecordID> deletedRecordIds;
+
+    for (const RecordID& recordId : recordIds) {
+
+        std::string record;
+
+        if (!storage.readRecord(
+                recordId,
+                record)) {
+
+            continue;
+        }
+
+        std::vector<std::string> row;
+        std::string current;
+
+        for (char ch : record) {
+            if (ch == '|') {
+                row.push_back(current);
+                current.clear();
+            }
+            else {
+                current += ch;
+            }
+        }
+
+        row.push_back(current);
+
+        for (size_t i = 0;
+             i < row.size() && i < schema.size();
+             i++) {
+
+            if (row[i].find("pool:") == 0) {
+
+                size_t id =
+                    std::stoull(
+                        row[i].substr(5)
+                    );
+
+                row[i] = pool.resolve(id);
+            }
+        }
+
+        std::string matchError;
+
+        bool matched =
+            rowMatchesCondition(
+                row,
+                schema,
+                (const ConditionNode*)cmd.where,
+                matchError
+            );
+
+        if (!matchError.empty()) {
+            std::cout
+                << "Error: "
+                << matchError
+                << "\n";
+            return;
+        }
+
+        if (!matched) {
+            continue;
+        }
+
+        if (!storage.deleteRecord(recordId)) {
+            std::cout
+                << "Error: failed to delete record\n";
+            return;
+        }
+
+        for (size_t col = 0;
+             col < schema.size();
+             col++) {
+
+            if (!schema[col].indexed) {
+                continue;
+            }
+
+            if (row[col] == "NULL") {
+                continue;
+            }
+
+            Value indexValue;
+            indexValue.isNull = false;
+
+            if (schema[col].type == "int") {
+                indexValue.type = Value::INT;
+                indexValue.intValue =
+                    std::stoi(row[col]);
+            }
+            else {
+                indexValue.type = Value::STRING;
+                indexValue.stringValue =
+                    row[col];
+            }
+
+            indexManager.deleteKey(
+                pureTableName,
+                schema[col].name,
+                indexValue,
+                recordId
+            );
+        }
+
+        deletedRecordIds.push_back(recordId);
+    }
+
+    indexManager.saveIndexes();
+
+    std::cout
+        << deletedRecordIds.size()
+        << " row(s) deleted\n";
+}
+
+void updateFromAST(const sql::UpdateCmd& cmd) {
+    std::string tablePath =
+        resolveTablePath(cmd.tableName);
+
+    if (tablePath.empty() ||
+        !pathExists(tablePath)) {
+
+        std::cout
+            << "Error: table does not exist\n";
+        return;
+    }
+
+    if (!cmd.where) {
+        std::cout
+            << "Error: UPDATE requires WHERE\n";
+        return;
+    }
+
+    auto schema = loadSchema(tablePath);
+
+    StringPool pool;
+    pool.load(
+        tablePath + "/string_pool.txt"
+    );
+
+    TableStorage storage(tablePath);
+
+    if (!storage.exists()) {
+        std::cout
+            << "0 row(s) updated\n";
+        return;
+    }
 
     std::vector<int> setIndexes;
     std::vector<std::string> setValues;
 
-    for (const auto& assignment : cmd.assignments) {
-        std::string colName = assignment.first;
-        std::string value = assignment.second;
+    for (const auto& assignment :
+         cmd.assignments) {
+
+        std::string colName =
+            assignment.first;
+
+        std::string value =
+            assignment.second;
 
         int colIndex = -1;
 
-        for (size_t i = 0; i < schema.size(); i++) {
+        for (size_t i = 0;
+             i < schema.size();
+             i++) {
+
             if (schema[i].name == colName) {
-                colIndex = static_cast<int>(i);
+                colIndex =
+                    static_cast<int>(i);
                 break;
             }
         }
 
         if (colIndex == -1) {
-            std::cout << "Error: column does not exist\n";
+            std::cout
+                << "Error: column does not exist\n";
             return;
         }
 
         if (value == "NULL") {
-            if (schema[colIndex].notNull || schema[colIndex].indexed) {
-                std::cout << "Error: NULL in NOT_NULL/INDEXED column " << colName << "\n";
+
+            if (schema[colIndex].notNull ||
+                schema[colIndex].indexed) {
+
+                std::cout
+                    << "Error: NULL in "
+                       "NOT_NULL/INDEXED column "
+                    << colName << "\n";
+
                 return;
             }
+
         } else if (schema[colIndex].type == "int") {
+
             if (!isIntegerValue(value)) {
-                std::cout << "Error: invalid int value\n";
+                std::cout
+                    << "Error: invalid int value\n";
                 return;
             }
+
         } else if (schema[colIndex].type == "string") {
+
             if (value.size() > MAX_STRING_LENGTH) {
-                std::cout << "Error: string value is too long for column " << colName << "\n";
+                std::cout
+                    << "Error: string value is too long "
+                       "for column "
+                    << colName << "\n";
                 return;
             }
         }
@@ -854,121 +1112,310 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
         setValues.push_back(value);
     }
 
-    if (!cmd.where) {
-        std::cout << "Error: UPDATE requires WHERE\n";
-        return;
-    }
-
-    std::vector<std::vector<std::string>> oldRows = rows;
-    std::vector<std::vector<std::string>> newRows = rows;
-    std::vector<size_t> updatedRowIds;
-    int updatedCount = 0;
-
-    for (size_t r = 0; r < newRows.size(); r++) {
-        std::string errorText;
-
-        bool matched = rowMatchesCondition(newRows[r], schema, (const ConditionNode*)cmd.where, errorText);
-
-        if (!errorText.empty()) {
-            std::cout << "Error: " << errorText << "\n";
-            return;
-        }
-
-        if (matched) {
-            for (size_t i = 0; i < setIndexes.size(); i++) {
-                newRows[r][setIndexes[i]] = setValues[i];
-            }
-            updatedRowIds.push_back(r);
-            updatedCount++;
-        }
-    }
-
-    for (size_t col = 0; col < schema.size(); col++) {
-        if (!schema[col].indexed) {
-            continue;
-        }
-
-        std::set<std::string> values;
-
-        for (const auto& row : newRows) {
-            std::string value = row[col];
-
-            if (value == "NULL") {
-                std::cout << "Error: NULL in INDEXED column " << schema[col].name << "\n";
-                return;
-            }
-
-            if (values.count(value)) {
-                std::cout << "Error: duplicate value for INDEXED column " << schema[col].name << "\n";
-                return;
-            }
-
-            values.insert(value);
-        }
-    }
-
     IndexManager indexManager;
-    indexManager.loadIndexes(tablePath, schema);
+
+    indexManager.loadIndexes(
+        tablePath,
+        schema
+    );
 
     bool needBuildIndexes = false;
+
     for (const auto& col : schema) {
-        if (col.indexed && !indexManager.hasIndex(col.name)) {
+
+        if (col.indexed &&
+            !indexManager.hasIndex(col.name)) {
+
             needBuildIndexes = true;
             break;
         }
     }
 
     if (needBuildIndexes) {
-        indexManager.buildIndexes(tablePath, schema);
+        indexManager.buildIndexes(
+            tablePath,
+            schema
+        );
     }
 
-    saveDataWithPool(tablePath, newRows, pool, schema);
-    pool.save(tablePath + "/string_pool.txt");
+    std::string pureTableName =
+        getPureTableName(cmd.tableName);
 
-    // UPDATE не меняет количество строк, поэтому rowId не сдвигаются
-    std::string pureTableName = getPureTableName(cmd.tableName);
+    std::vector<RecordID> recordIds =
+        storage.getAllRecordIds();
 
-    for (size_t rowId : updatedRowIds) {
-        for (size_t col = 0; col < schema.size(); col++) {
+    int updatedCount = 0;
+
+    for (const RecordID& recordId :
+         recordIds) {
+
+        std::string record;
+
+        if (!storage.readRecord(
+                recordId,
+                record)) {
+
+            continue;
+        }
+
+        std::vector<std::string> oldRow;
+        std::string current;
+
+        for (char ch : record) {
+
+            if (ch == '|') {
+                oldRow.push_back(current);
+                current.clear();
+            }
+            else {
+                current += ch;
+            }
+        }
+
+        oldRow.push_back(current);
+
+        for (size_t i = 0;
+             i < oldRow.size() &&
+             i < schema.size();
+             i++) {
+
+            if (oldRow[i].find("pool:") == 0) {
+
+                size_t id =
+                    std::stoull(
+                        oldRow[i].substr(5)
+                    );
+
+                oldRow[i] =
+                    pool.resolve(id);
+            }
+        }
+
+        std::string matchError;
+
+        bool matched =
+            rowMatchesCondition(
+                oldRow,
+                schema,
+                (const ConditionNode*)cmd.where,
+                matchError
+            );
+
+        if (!matchError.empty()) {
+            std::cout
+                << "Error: "
+                << matchError
+                << "\n";
+            return;
+        }
+
+        if (!matched) {
+            continue;
+        }
+
+        std::vector<std::string> newRow =
+            oldRow;
+
+        for (size_t i = 0;
+             i < setIndexes.size();
+             i++) {
+
+            newRow[setIndexes[i]] =
+                setValues[i];
+        }
+
+        for (size_t col = 0;
+             col < schema.size();
+             col++) {
+
             if (!schema[col].indexed) {
                 continue;
             }
 
-            std::string oldValue = oldRows[rowId][col];
-            std::string newValue = newRows[rowId][col];
+            if (newRow[col] == "NULL") {
+                std::cout
+                    << "Error: NULL in INDEXED column "
+                    << schema[col].name
+                    << "\n";
+                return;
+            }
 
-            if (oldValue == newValue) {
+            if (newRow[col] == oldRow[col]) {
+                continue;
+            }
+
+            Value newIndexValue;
+            newIndexValue.isNull = false;
+
+            if (schema[col].type == "int") {
+
+                newIndexValue.type = Value::INT;
+                newIndexValue.intValue =
+                    std::stoi(newRow[col]);
+
+            } else {
+
+                newIndexValue.type = Value::STRING;
+                newIndexValue.stringValue =
+                    newRow[col];
+            }
+
+            std::vector<RecordID> existingIds =
+                indexManager.find(
+                    pureTableName,
+                    schema[col].name,
+                    newIndexValue
+                );
+
+            for (const RecordID& existingId :
+                 existingIds) {
+
+                if (existingId != recordId) {
+
+                    std::cout
+                        << "Error: duplicate value for "
+                           "INDEXED column "
+                        << schema[col].name
+                        << "\n";
+
+                    return;
+                }
+            }
+        }
+
+        std::string newRecord;
+
+        for (size_t i = 0;
+             i < newRow.size();
+             i++) {
+
+            if (i > 0) {
+                newRecord += "|";
+            }
+
+            if (newRow[i] == "NULL") {
+
+                newRecord += "NULL";
+
+            } else if (schema[i].type == "string") {
+
+                size_t poolId =
+                    pool.intern(newRow[i]);
+
+                newRecord +=
+                    "pool:" +
+                    std::to_string(poolId);
+
+            } else {
+
+                newRecord += newRow[i];
+            }
+        }
+
+        bool updatedInPlace =
+            storage.updateRecord(
+                recordId,
+                newRecord
+            );
+
+        RecordID newRecordId =
+            recordId;
+
+        if (!updatedInPlace) {
+
+            newRecordId =
+                storage.insertRecord(
+                    newRecord
+                );
+
+            if (!newRecordId.isValid()) {
+                std::cout
+                    << "Error: failed to insert updated record\n";
+                return;
+            }
+
+            if (!storage.deleteRecord(
+                    recordId)) {
+
+                std::cout
+                    << "Error: failed to delete old record\n";
+                return;
+            }
+        }
+
+        for (size_t col = 0;
+             col < schema.size();
+             col++) {
+
+            if (!schema[col].indexed) {
+                continue;
+            }
+
+            if (oldRow[col] == newRow[col] &&
+                newRecordId == recordId) {
+
                 continue;
             }
 
             Value oldIndexValue;
             oldIndexValue.isNull = false;
+
             if (schema[col].type == "int") {
+
                 oldIndexValue.type = Value::INT;
-                oldIndexValue.intValue = std::stoi(oldValue);
+                oldIndexValue.intValue =
+                    std::stoi(oldRow[col]);
+
             } else {
+
                 oldIndexValue.type = Value::STRING;
-                oldIndexValue.stringValue = oldValue;
+                oldIndexValue.stringValue =
+                    oldRow[col];
             }
 
             Value newIndexValue;
             newIndexValue.isNull = false;
+
             if (schema[col].type == "int") {
+
                 newIndexValue.type = Value::INT;
-                newIndexValue.intValue = std::stoi(newValue);
+                newIndexValue.intValue =
+                    std::stoi(newRow[col]);
+
             } else {
+
                 newIndexValue.type = Value::STRING;
-                newIndexValue.stringValue = newValue;
+                newIndexValue.stringValue =
+                    newRow[col];
             }
 
-            indexManager.deleteKey(pureTableName, schema[col].name, oldIndexValue);
-            indexManager.insertKey(pureTableName, schema[col].name, newIndexValue, rowId);
+            indexManager.deleteKey(
+                pureTableName,
+                schema[col].name,
+                oldIndexValue,
+                recordId
+            );
+
+            indexManager.insertKey(
+                pureTableName,
+                schema[col].name,
+                newIndexValue,
+                newRecordId
+            );
         }
+
+        updatedCount++;
     }
+
+    pool.save(
+        tablePath + "/string_pool.txt"
+    );
 
     indexManager.saveIndexes();
 
-    std::cout << updatedCount << " row(s) updated\n";
+    std::cout
+        << updatedCount
+        << " row(s) updated\n";
 }
 
 void selectFromAST(const sql::SelectCmd& cmd) {
@@ -988,13 +1435,18 @@ void selectFromAST(const sql::SelectCmd& cmd) {
     StringPool pool;
     pool.load(tablePath + "/string_pool.txt");
 
-    auto rows = loadDataWithPool(tablePath, pool);
+    TableStorage storage(tablePath);
+
+    if (!storage.exists()) {
+        std::cout << "[]\n";
+        return;
+    }
 
     IndexManager indexManager;
     indexManager.loadIndexes(tablePath, schema);
 
     bool useIndex = false;
-    std::set<size_t> indexedRowIds;
+    std::vector<RecordID> indexedRecordIds;
 
     const ConditionNode* whereCond =
         (const ConditionNode*)cmd.where;
@@ -1019,19 +1471,34 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
             std::string colName = whereCond->left;
 
-
             if (whereCond->op == "==") {
                 std::string key = whereCond->right;
 
-                size_t rowId;
+                Value value;
 
-                if (indexManager.findRowId(
-                        colName,
-                        key,
-                        rowId)) {
-
-                    indexedRowIds.insert(rowId);
+                if (schema[indexedColumn].type == "int") {
+                    value.type = Value::INT;
+                    value.intValue = std::stoi(key);
+                    value.isNull = false;
                 }
+                else {
+                    value.type = Value::STRING;
+                    value.stringValue = key;
+                    value.isNull = false;
+                }
+
+                std::vector<RecordID> recordIds =
+                    indexManager.find(
+                        getPureTableName(cmd.tableName),
+                        colName,
+                        value
+                    );
+
+                indexedRecordIds.insert(
+                    indexedRecordIds.end(),
+                    recordIds.begin(),
+                    recordIds.end()
+                );
 
                 useIndex = true;
             }
@@ -1039,15 +1506,16 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
             else if (whereCond->op == "BETWEEN") {
 
-                auto ids = indexManager.findRange(
+                auto recordIds = indexManager.findRange(
                     colName,
                     whereCond->right,
                     whereCond->right2
                 );
 
-                indexedRowIds.insert(
-                    ids.begin(),
-                    ids.end()
+                indexedRecordIds.insert(
+                    indexedRecordIds.end(),
+                    recordIds.begin(),
+                    recordIds.end()
                 );
 
                 useIndex = true;
@@ -1089,15 +1557,16 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                     rightKey = bound;
                 }
 
-                auto ids = indexManager.findRange(
+                auto recordIds = indexManager.findRange(
                     colName,
                     leftKey,
                     rightKey
                 );
 
-                indexedRowIds.insert(
-                    ids.begin(),
-                    ids.end()
+                indexedRecordIds.insert(
+                    indexedRecordIds.end(),
+                    recordIds.begin(),
+                    recordIds.end()
                 );
 
                 useIndex = true;
@@ -1151,19 +1620,57 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
         if (useIndex) {
 
-            for (size_t rowId : indexedRowIds) {
+            for (const RecordID& recordId :
+                indexedRecordIds) {
 
-                if (rowId >= rows.size()) {
+                std::string record;
+
+                if (!storage.readRecord(
+                        recordId,
+                        record)) {
+
                     continue;
                 }
 
-                const auto& row = rows[rowId];
+                std::vector<std::string> row;
+                std::string current;
+
+                for (char ch : record) {
+
+                    if (ch == '|') {
+                        row.push_back(current);
+                        current.clear();
+                    }
+                    else {
+                        current += ch;
+                    }
+                }
+
+                row.push_back(current);
+
+                for (size_t i = 0;
+                    i < row.size() &&
+                    i < schema.size();
+                    i++) {
+
+                    if (row[i].find("pool:") == 0) {
+
+                        size_t id =
+                            std::stoull(
+                                row[i].substr(5)
+                            );
+
+                        row[i] =
+                            pool.resolve(id);
+                    }
+                }
 
                 for (size_t a = 0;
-                     a < cmd.columns.size();
-                     a++) {
+                    a < cmd.columns.size();
+                    a++) {
 
-                    const auto& sc = cmd.columns[a];
+                    const auto& sc =
+                        cmd.columns[a];
 
                     if (sc.aggFunc == "COUNT" &&
                         sc.aggArg == "*") {
@@ -1175,10 +1682,12 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                     int colIndex = -1;
 
                     for (size_t i = 0;
-                         i < schema.size();
-                         i++) {
+                        i < schema.size();
+                        i++) {
 
-                        if (schema[i].name == sc.aggArg) {
+                        if (schema[i].name ==
+                            sc.aggArg) {
+
                             colIndex =
                                 static_cast<int>(i);
                             break;
@@ -1192,7 +1701,8 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                         return;
                     }
 
-                    std::string val = row[colIndex];
+                    std::string val =
+                        row[colIndex];
 
                     if (val == "NULL") {
                         continue;
@@ -1203,7 +1713,7 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                         counts[a]++;
 
                     } else if (sc.aggFunc == "SUM" ||
-                               sc.aggFunc == "AVG") {
+                            sc.aggFunc == "AVG") {
 
                         if (schema[colIndex].type != "int") {
                             std::cout
@@ -1213,7 +1723,9 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                             return;
                         }
 
-                        sums[a] += std::stoll(val);
+                        sums[a] +=
+                            std::stoll(val);
+
                         counts[a]++;
 
                     } else {
@@ -1228,12 +1740,53 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
         } else {
 
-            // нет  индекса
-            for (size_t rowIndex = 0;
-                 rowIndex < rows.size();
-                 rowIndex++) {
+            std::vector<RecordID> recordIds =
+                storage.getAllRecordIds();
 
-                const auto& row = rows[rowIndex];
+            for (const RecordID& recordId :
+                recordIds) {
+
+                std::string record;
+
+                if (!storage.readRecord(
+                        recordId,
+                        record)) {
+
+                    continue;
+                }
+
+                std::vector<std::string> row;
+                std::string current;
+
+                for (char ch : record) {
+
+                    if (ch == '|') {
+                        row.push_back(current);
+                        current.clear();
+                    }
+                    else {
+                        current += ch;
+                    }
+                }
+
+                row.push_back(current);
+
+                for (size_t i = 0;
+                    i < row.size() &&
+                    i < schema.size();
+                    i++) {
+
+                    if (row[i].find("pool:") == 0) {
+
+                        size_t id =
+                            std::stoull(
+                                row[i].substr(5)
+                            );
+
+                        row[i] =
+                            pool.resolve(id);
+                    }
+                }
 
                 if (whereCond) {
                     std::string error;
@@ -1433,13 +1986,50 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
     if (useIndex) {
 
-        for (size_t rowId : indexedRowIds) {
+        for (const RecordID& recordId :
+            indexedRecordIds) {
 
-            if (rowId >= rows.size()) {
+            std::string record;
+
+            if (!storage.readRecord(
+                    recordId,
+                    record)) {
+
                 continue;
             }
 
-            const auto& row = rows[rowId];
+            std::vector<std::string> row;
+            std::string current;
+
+            for (char ch : record) {
+
+                if (ch == '|') {
+                    row.push_back(current);
+                    current.clear();
+                }
+                else {
+                    current += ch;
+                }
+            }
+
+            row.push_back(current);
+
+            for (size_t i = 0;
+                i < row.size() &&
+                i < schema.size();
+                i++) {
+
+                if (row[i].find("pool:") == 0) {
+
+                    size_t id =
+                        std::stoull(
+                            row[i].substr(5)
+                        );
+
+                    row[i] =
+                        pool.resolve(id);
+                }
+            }
 
             if (!firstPrinted) {
                 std::cout << ",\n";
@@ -1509,11 +2099,53 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
     } else {
 
-        for (size_t rowIndex = 0;
-             rowIndex < rows.size();
-             rowIndex++) {
+        std::vector<RecordID> recordIds =
+            storage.getAllRecordIds();
 
-            const auto& row = rows[rowIndex];
+        for (const RecordID& recordId :
+            recordIds) {
+
+            std::string record;
+
+            if (!storage.readRecord(
+                    recordId,
+                    record)) {
+
+                continue;
+            }
+
+            std::vector<std::string> row;
+            std::string current;
+
+            for (char ch : record) {
+
+                if (ch == '|') {
+                    row.push_back(current);
+                    current.clear();
+                }
+                else {
+                    current += ch;
+                }
+            }
+
+            row.push_back(current);
+
+            for (size_t i = 0;
+                i < row.size() &&
+                i < schema.size();
+                i++) {
+
+                if (row[i].find("pool:") == 0) {
+
+                    size_t id =
+                        std::stoull(
+                            row[i].substr(5)
+                        );
+
+                    row[i] =
+                        pool.resolve(id);
+                }
+            }
 
             if (whereCond) {
                 std::string error;

@@ -2,8 +2,9 @@
 
 #include <string>
 #include <vector>
+
 #include "value.h"
-#include "../memory/string_pool.h"
+#include "record_id.h"
 
 struct Column {
     std::string name;
@@ -26,21 +27,52 @@ struct Row {
 struct Table {
     std::string name;
     std::vector<Column> columns;
-    std::vector<Row> rows;
 };
 
 void dropTable(const std::string& tableName);
 
-namespace sql { struct CreateTableCmd; struct InsertCmd; struct SelectCmd; struct UpdateCmd; struct DeleteCmd; }
+namespace sql {
+    struct CreateTableCmd;
+    struct InsertCmd;
+    struct SelectCmd;
+    struct UpdateCmd;
+    struct DeleteCmd;
+}
 
-void createTableFromAST(const sql::CreateTableCmd& cmd);
-void insertFromAST(const sql::InsertCmd& cmd);
-void selectFromAST(const sql::SelectCmd& cmd);
-void updateFromAST(const sql::UpdateCmd& cmd);
-void deleteFromAST(const sql::DeleteCmd& cmd);
+void createTableFromAST(
+    const sql::CreateTableCmd& cmd
+);
 
-std::vector<std::string> splitByCommaTopLevel(const std::string& text);
-std::vector<std::string> splitValues(const std::string& text);
+void insertFromAST(
+    const sql::InsertCmd& cmd
+);
 
-std::string resolveTablePath(const std::string& tableName);
-std::string getPureTableName(const std::string& tableName);
+void selectFromAST(
+    const sql::SelectCmd& cmd
+);
+
+void updateFromAST(
+    const sql::UpdateCmd& cmd
+);
+
+void deleteFromAST(
+    const sql::DeleteCmd& cmd
+);
+
+std::vector<std::string>
+splitByCommaTopLevel(
+    const std::string& text
+);
+
+std::vector<std::string>
+splitValues(
+    const std::string& text
+);
+
+std::string resolveTablePath(
+    const std::string& tableName
+);
+
+std::string getPureTableName(
+    const std::string& tableName
+);

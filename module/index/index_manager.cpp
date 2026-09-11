@@ -5,68 +5,103 @@ IndexManager::IndexManager(int order)
 {
 }
 
-std::string IndexManager::valueToKey(const Value& v) const {
+std::string IndexManager::valueToKey(
+    const Value& v
+) const {
     if (v.type == Value::INT) {
         return std::to_string(v.intValue);
     }
+
     if (v.type == Value::STRING) {
         return v.stringValue;
     }
+
     return "";
 }
 
-void IndexManager::createIndex(const std::string& table,
-                               const std::string& column,
-                               const std::string& type)
-{
+void IndexManager::createIndex(
+    const std::string& table,
+    const std::string& column,
+    const std::string& type
+) {
     if (indexes[table].count(column) == 0) {
-        indexes[table][column] = new BPlusTree(order, type);
+        indexes[table][column] =
+            new BPlusTree(order, type);
     }
 
-    if (!activeTablePath.empty() && table == activeTable) {
+    if (!activeTablePath.empty() &&
+        table == activeTable) {
+
         const std::filesystem::path idxPath =
-            std::filesystem::path(activeTablePath) / (column + ".idx");
-        indexes[table][column]->setStoragePath(idxPath.string(), column);
+            std::filesystem::path(activeTablePath) /
+            (column + ".idx");
+
+        indexes[table][column]->setStoragePath(
+            idxPath.string(),
+            column
+        );
     }
 }
 
-void IndexManager::insertKey(const std::string& table,
-                             const std::string& column,
-                             const Value& value,
-                             size_t rowId)
-{
-    if (!hasIndex(table, column)) return;
+void IndexManager::insertKey(
+    const std::string& table,
+    const std::string& column,
+    const Value& value,
+    const RecordID& recordId
+) {
+    if (!hasIndex(table, column)) {
+        return;
+    }
 
-    const std::string key = valueToKey(value);
-    indexes[table][column]->insert(key, rowId);
+    const std::string key =
+        valueToKey(value);
+
+    indexes[table][column]->insert(
+        key,
+        recordId
+    );
 }
 
-void IndexManager::deleteKey(const std::string& table,
-                             const std::string& column,
-                             const Value& value)
-{
-    if (!hasIndex(table, column)) return;
+void IndexManager::deleteKey(
+    const std::string& table,
+    const std::string& column,
+    const Value& value,
+    const RecordID& recordId
+) {
+    if (!hasIndex(table, column)) {
+        return;
+    }
 
-    const std::string key = valueToKey(value);
-    indexes[table][column]->remove(key);
+    const std::string key =
+        valueToKey(value);
+
+    indexes[table][column]->remove(key, recordId);
 }
 
-std::vector<size_t> IndexManager::find(const std::string& table,
-                                       const std::string& column,
-                                       const Value& value)
-{
-    if (!hasIndex(table, column)) return {};
+std::vector<RecordID> IndexManager::find(
+    const std::string& table,
+    const std::string& column,
+    const Value& value
+) {
+    if (!hasIndex(table, column)) {
+        return {};
+    }
 
-    const std::string key = valueToKey(value);
+    const std::string key =
+        valueToKey(value);
+
     return indexes[table][column]->searchAll(key);
 }
 
-std::vector<size_t> IndexManager::findRange(const std::string& table,
-                                            const std::string& column,
-                                            const Value& left,
-                                            const Value& right)
-{
-    if (!hasIndex(table, column)) return {};
+std::vector<RecordID> IndexManager::findRange(
+    const std::string& table,
+    const std::string& column,
+    const Value& left,
+    const Value& right
+) {
+    if (!hasIndex(table, column)) {
+        return {};
+    }
 
     return indexes[table][column]->rangeSearch(
         valueToKey(left),
@@ -74,60 +109,68 @@ std::vector<size_t> IndexManager::findRange(const std::string& table,
     );
 }
 
-bool IndexManager::hasIndex(const std::string& table,
-                            const std::string& column) const
-{
+bool IndexManager::hasIndex(
+    const std::string& table,
+    const std::string& column
+) const {
     auto it = indexes.find(table);
-    if (it == indexes.end()) return false;
+
+    if (it == indexes.end()) {
+        return false;
+    }
 
     return it->second.count(column) > 0;
 }
 
-void IndexManager::saveIndex(const std::string& table,
-                             const std::string& column,
-                             const std::string& path)
-{
-    if (!hasIndex(table, column)) return;
-    BPlusTree* tree = indexes[table][column];
-    tree->saveToJsonFile(path, column);
-}
-
-void IndexManager::loadIndex(const std::string& table,
-                             const std::string& column,
-                             const std::string& type,
-                             const std::string& path)
-{
-    createIndex(table, column, type);
-    indexes[table][column]->setStoragePath(path, column);
-
-    std::ifstream in(path);
-    if (!in.is_open()) return;
-
-    std::string firstLine;
-    std::getline(in, firstLine);
-    in.close();
-    if (firstLine.find("{") != std::string::npos ||
-        firstLine.find("\"type\"") != std::string::npos) {
-        if (indexes[table][column]->loadFromJsonFile(path)) {
-            indexes[table][column]->setStoragePath(path, column);
-            return;
-        }
+void IndexManager::saveIndex(
+    const std::string& table,
+    const std::string& column,
+    const std::string& path
+) {
+    if (!hasIndex(table, column)) {
+        return;
     }
 
-    in.open(path);
-    if (!in.is_open()) return;
+    BPlusTree* tree =
+        indexes[table][column];
 
-    std::string line;
-    while (std::getline(in, line)) {
-        const size_t pos = line.find('|');
-        if (pos == std::string::npos) continue;
-        const std::string key = line.substr(0, pos);
-        const size_t rowId = std::stoull(line.substr(pos + 1));
-        indexes[table][column]->insert(key, rowId);
-    }
+    tree->saveToJsonFile(
+        path,
+        column
+    );
 }
 
-Value IndexManager::makeValue(const std::string& raw, const std::string& type) const {
+void IndexManager::loadIndex(
+    const std::string& table,
+    const std::string& column,
+    const std::string& type,
+    const std::string& path
+) {
+    createIndex(
+        table,
+        column,
+        type
+    );
+
+    indexes[table][column]->setStoragePath(
+        path,
+        column
+    );
+
+    if (!indexes[table][column]->loadFromJsonFile(path)) {
+        return;
+    }
+
+    indexes[table][column]->setStoragePath(
+        path,
+        column
+    );
+}
+
+Value IndexManager::makeValue(
+    const std::string& raw,
+    const std::string& type
+) const {
     Value v;
 
     if (raw == "NULL") {
@@ -137,6 +180,7 @@ Value IndexManager::makeValue(const std::string& raw, const std::string& type) c
     }
 
     v.isNull = false;
+
     if (type == "int") {
         v.type = Value::INT;
         v.intValue = std::stoi(raw);
@@ -148,28 +192,50 @@ Value IndexManager::makeValue(const std::string& raw, const std::string& type) c
     return v;
 }
 
-void IndexManager::buildIndexes(const std::filesystem::path& tablePath,
-                                const std::vector<Column>& schema) {
-    activeTable = tablePath.filename().string();
-    activeTablePath = tablePath.string();
+void IndexManager::buildIndexes(
+    const std::filesystem::path& tablePath,
+    const std::vector<Column>& schema
+) {
+    activeTable =
+        tablePath.filename().string();
+
+    activeTablePath =
+        tablePath.string();
+
     for (const auto& col : schema) {
         if (col.indexed) {
-            createIndex(activeTable, col.name, col.type);
+            createIndex(
+                activeTable,
+                col.name,
+                col.type
+            );
         }
     }
 
-    std::ifstream in(tablePath / "data.txt");
-    if (!in.is_open()) {
+    TableStorage storage(
+        tablePath.string()
+    );
+
+    if (!storage.exists()) {
         return;
     }
 
-    std::string line;
-    size_t rowId = 0;
+    const std::vector<RecordID> recordIds =
+        storage.getAllRecordIds();
 
-    while (std::getline(in, line)) {
+    for (const RecordID& recordId : recordIds) {
+        std::string record;
+
+        if (!storage.readRecord(
+                recordId,
+                record)) {
+            continue;
+        }
+
         std::vector<std::string> values;
         std::string current;
-        for (char ch : line) {
+
+        for (char ch : record) {
             if (ch == '|') {
                 values.push_back(current);
                 current.clear();
@@ -179,69 +245,112 @@ void IndexManager::buildIndexes(const std::filesystem::path& tablePath,
         }
 
         values.push_back(current);
-        for (size_t i = 0; i < schema.size() && i < values.size(); i++) {
-            if (schema[i].indexed) {
-                Value v = makeValue(values[i], schema[i].type);
-                insertKey(activeTable, schema[i].name, v, rowId);
-            }
-        }
 
-        rowId++;
+        for (size_t i = 0;
+             i < schema.size() &&
+             i < values.size();
+             ++i) {
+
+            if (!schema[i].indexed) {
+                continue;
+            }
+
+            Value v = makeValue(
+                values[i],
+                schema[i].type
+            );
+
+            insertKey(
+                activeTable,
+                schema[i].name,
+                v,
+                recordId
+            );
+        }
     }
 }
 
-bool IndexManager::hasIndex(const std::string& column) const {
-    return hasIndex(activeTable, column);
+bool IndexManager::hasIndex(
+    const std::string& column
+) const {
+    return hasIndex(
+        activeTable,
+        column
+    );
 }
 
-bool IndexManager::checkUnique(const std::string& column,
-                               const std::string& rawValue) {
+bool IndexManager::checkUnique(
+    const std::string& column,
+    const std::string& rawValue
+) {
     if (!hasIndex(activeTable, column)) {
         return true;
     }
 
     const std::string key = rawValue;
 
-    auto itTable = indexes.find(activeTable);
+    auto itTable =
+        indexes.find(activeTable);
+
     if (itTable == indexes.end()) {
         return true;
     }
 
-    auto itCol = itTable->second.find(column);
+    auto itCol =
+        itTable->second.find(column);
+
     if (itCol == itTable->second.end()) {
         return true;
     }
-    size_t dummy;
-    return !itCol->second->search(key, dummy);
+
+    RecordID dummy;
+
+    return !itCol->second->search(
+        key,
+        dummy
+    );
 }
 
-bool IndexManager::findRowId(const std::string& column,
-                             const std::string& rawValue,
-                             size_t& rowId) {
+bool IndexManager::findRowId(
+    const std::string& column,
+    const std::string& rawValue,
+    RecordID& recordId
+) {
     if (!hasIndex(activeTable, column)) {
         return false;
     }
 
-    const std::vector<size_t> result = indexes[activeTable][column]->searchAll(rawValue);
+    const std::vector<RecordID> result =
+        indexes[activeTable][column]->searchAll(
+            rawValue
+        );
+
     if (result.empty()) {
         return false;
     }
 
-    rowId = result[0];
+    recordId = result[0];
+
     return true;
 }
 
-void IndexManager::insertKey(const std::string& column,
-                             const std::string& rawValue,
-                             size_t rowId) {
+void IndexManager::insertKey(
+    const std::string& column,
+    const std::string& rawValue,
+    const RecordID& recordId
+) {
     if (!hasIndex(activeTable, column)) {
         return;
     }
 
-    indexes[activeTable][column]->insert(rawValue, rowId);
+    indexes[activeTable][column]->insert(
+        rawValue,
+        recordId
+    );
 }
 
-std::vector<size_t> IndexManager::findRange(
+std::vector<RecordID>
+IndexManager::findRange(
     const std::string& column,
     const std::string& left,
     const std::string& right
@@ -249,35 +358,37 @@ std::vector<size_t> IndexManager::findRange(
     if (!hasIndex(activeTable, column)) {
         return {};
     }
-    return indexes[activeTable][column]->rangeSearch(left, right);
-}
 
-void IndexManager::shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds) {
-    if (deletedRowIds.empty()) {
-        return;
-    }
-
-    auto itTable = indexes.find(activeTable);
-    if (itTable == indexes.end()) {
-        return;
-    }
-
-    for (auto& entry : itTable->second) {
-        BPlusTree* tree = entry.second;
-        if (tree) {
-            tree->shiftRowIdsAfterDeleted(deletedRowIds);
-        }
-    }
+    return indexes[activeTable][column]->rangeSearch(
+        left,
+        right
+    );
 }
 
 void IndexManager::saveIndexes() {
-    std::filesystem::path dir = activeTablePath;
+    if (activeTable.empty()) {
+        return;
+    }
 
-    for (const auto& entry : indexes[activeTable]) {
-        const std::string& column = entry.first;
-        BPlusTree* tree = entry.second;
-        const std::string idxPath = (dir / (column + ".idx")).string();
-        tree->saveToJsonFile(idxPath, column);
+    const std::filesystem::path dir =
+        activeTablePath;
+
+    for (const auto& entry :
+         indexes[activeTable]) {
+
+        const std::string& column =
+            entry.first;
+
+        BPlusTree* tree =
+            entry.second;
+
+        const std::string idxPath =
+            (dir / (column + ".idx")).string();
+
+        tree->saveToJsonFile(
+            idxPath,
+            column
+        );
     }
 }
 
@@ -285,8 +396,12 @@ void IndexManager::loadIndexes(
     const std::filesystem::path& tablePath,
     const std::vector<Column>& schema
 ) {
-    activeTable = tablePath.filename().string();
-    activeTablePath = tablePath.string();
+    activeTable =
+        tablePath.filename().string();
+
+    activeTablePath =
+        tablePath.string();
+
     indexes[activeTable].clear();
 
     for (const auto& col : schema) {
@@ -294,44 +409,28 @@ void IndexManager::loadIndexes(
             continue;
         }
 
-        const std::string idxPath = (tablePath / (col.name + ".idx")).string();
-        std::ifstream in(idxPath);
+        const std::string idxPath =
+            (tablePath / (col.name + ".idx")).string();
 
-        BPlusTree* tree = new BPlusTree(order, col.type);
-        tree->setStoragePath(idxPath, col.name);
+        BPlusTree* tree =
+            new BPlusTree(
+                order,
+                col.type
+            );
 
-        if (in.is_open()) {
-            if (tree->loadFromJsonFile(idxPath)) {
-                tree->setStoragePath(idxPath, col.name);
-                indexes[activeTable][col.name] = tree;
-                continue;
-            }
+        tree->setStoragePath(
+            idxPath,
+            col.name
+        );
 
-            in.clear();
-            in.seekg(0);
-            std::string line;
-            bool loadedAnyKey = false;
-            while (std::getline(in, line)) {
-                const size_t sep = line.find('|');
-                if (sep == std::string::npos) {
-                    continue;
-                }
-
-                const std::string key = line.substr(0, sep);
-                const size_t rowId = static_cast<size_t>(std::stoull(line.substr(sep + 1)));
-
-                if (tree->insert(key, rowId)) {
-                    loadedAnyKey = true;
-                }
-            }
-            if (loadedAnyKey) {
-                indexes[activeTable][col.name] = tree;
-                continue;
-            }
+        if (tree->loadFromJsonFile(idxPath)) {
+            tree->setStoragePath(
+                idxPath,
+                col.name
+            );
         }
 
-        // No persisted index yet: still keep the empty disk-backed tree so
-        // subsequent INSERT operations work without an in-memory tree.
-        indexes[activeTable][col.name] = tree;
+        indexes[activeTable][col.name] =
+            tree;
     }
 }

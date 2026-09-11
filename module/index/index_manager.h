@@ -1,10 +1,12 @@
 #pragma once
 
 #include "bplustree.h"
+#include "../core/record_id.h"
 #include "../core/value.h"
 #include "../core/table.h"
-#include <filesystem>
+#include "../core/table_storage.h"
 
+#include <filesystem>
 #include <string>
 #include <vector>
 #include <map>
@@ -13,76 +15,112 @@
 class IndexManager {
 private:
     int order;
-    std::map<std::string, std::map<std::string, BPlusTree*>> indexes;
 
-    std::string valueToKey(const Value& v) const;
+    std::map<
+        std::string,
+        std::map<std::string, BPlusTree*>
+    > indexes;
+
     std::string activeTable;
     std::string activeTablePath;
 
-    Value makeValue(const std::string& raw, const std::string& type) const;
+    std::string valueToKey(const Value& v) const;
+
+    Value makeValue(
+        const std::string& raw,
+        const std::string& type
+    ) const;
 
 public:
-    IndexManager(int order = 3);
+    explicit IndexManager(int order = 3);
 
-    void buildIndexes(const std::filesystem::path& tablePath,
-                      const std::vector<Column>& schema);
+    void buildIndexes(
+        const std::filesystem::path& tablePath,
+        const std::vector<Column>& schema
+    );
 
-    bool hasIndex(const std::string& column) const;
+    bool hasIndex(
+        const std::string& column
+    ) const;
 
-    bool checkUnique(const std::string& column,
-                     const std::string& rawValue);
+    bool checkUnique(
+        const std::string& column,
+        const std::string& rawValue
+    );
 
-    std::vector<size_t> findRange(
+    std::vector<RecordID> findRange(
         const std::string& column,
         const std::string& left,
         const std::string& right
     );
 
-    bool findRowId(const std::string& column,
-                   const std::string& rawValue,
-                   size_t& rowId);
+    bool findRowId(
+        const std::string& column,
+        const std::string& rawValue,
+        RecordID& recordId
+    );
 
-    void insertKey(const std::string& column,
-                   const std::string& rawValue,
-                   size_t rowId);
+    void insertKey(
+        const std::string& column,
+        const std::string& rawValue,
+        const RecordID& recordId
+    );
 
-    void createIndex(const std::string& table,
-                     const std::string& column,
-                     const std::string& type);
+    void createIndex(
+        const std::string& table,
+        const std::string& column,
+        const std::string& type
+    );
 
-    void insertKey(const std::string& table,
-                   const std::string& column,
-                   const Value& value,
-                   size_t rowId);
+    void insertKey(
+        const std::string& table,
+        const std::string& column,
+        const Value& value,
+        const RecordID& recordId
+    );
 
-    void deleteKey(const std::string& table,
-                   const std::string& column,
-                   const Value& value);
+    void deleteKey(
+        const std::string& table,
+        const std::string& column,
+        const Value& value,
+        const RecordID& recordId
+    );
 
-    std::vector<size_t> find(const std::string& table,
-                             const std::string& column,
-                             const Value& value);
+    std::vector<RecordID> find(
+        const std::string& table,
+        const std::string& column,
+        const Value& value
+    );
 
-    std::vector<size_t> findRange(const std::string& table,
-                                  const std::string& column,
-                                  const Value& left,
-                                  const Value& right);
+    std::vector<RecordID> findRange(
+        const std::string& table,
+        const std::string& column,
+        const Value& left,
+        const Value& right
+    );
 
-    bool hasIndex(const std::string& table,
-                  const std::string& column) const;
+    bool hasIndex(
+        const std::string& table,
+        const std::string& column
+    ) const;
 
-    void saveIndex(const std::string& table,
-                   const std::string& column,
-                   const std::string& path);
+    void saveIndex(
+        const std::string& table,
+        const std::string& column,
+        const std::string& path
+    );
 
-    void loadIndex(const std::string& table,
-                   const std::string& column,
-                   const std::string& type,
-                   const std::string& path);
-
-    void shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds);
+    void loadIndex(
+        const std::string& table,
+        const std::string& column,
+        const std::string& type,
+        const std::string& path
+    );
 
     void saveIndexes();
-    void loadIndexes(const std::filesystem::path& tablePath,
-                     const std::vector<Column>& schema);
+
+    void loadIndexes(
+        const std::filesystem::path& tablePath,
+        const std::vector<Column>& schema
+    );
 };

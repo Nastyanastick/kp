@@ -10,7 +10,7 @@
 namespace {
 
 const std::uint32_t PAGE_MAGIC = 0x42505431u; // BPT1
-const std::uint16_t PAGE_VERSION = 1;
+const std::uint16_t PAGE_VERSION = 2;
 const std::size_t PAGE_HEADER_SIZE = sizeof(std::uint32_t) + sizeof(std::uint16_t)
     + sizeof(std::uint8_t) + sizeof(std::uint32_t) + sizeof(std::uint32_t);
 const std::uint8_t LEAF_PAGE = 1;
@@ -27,10 +27,12 @@ void appendU32(std::vector<char>& data, std::uint32_t value) {
     }
 }
 
-void appendU64(std::vector<char>& data, std::uint64_t value) {
-    for (int i = 0; i < 8; ++i) {
-        data.push_back(static_cast<char>((value >> (8 * i)) & 0xffu));
-    }
+void appendRecordID(
+    std::vector<char>& data,
+    const RecordID& recordId
+) {
+    appendU32(data, recordId.pageId);
+    appendU32(data, recordId.slotId);
 }
 
 bool readU16(const char* data, std::size_t size, std::size_t& pos, std::uint16_t& value) {
@@ -51,13 +53,26 @@ bool readU32(const char* data, std::size_t size, std::size_t& pos, std::uint32_t
     return true;
 }
 
-bool readU64(const char* data, std::size_t size, std::size_t& pos, std::uint64_t& value) {
-    if (pos + 8 > size) return false;
-    value = 0;
-    for (int i = 0; i < 8; ++i) {
-        value |= static_cast<std::uint64_t>(static_cast<unsigned char>(data[pos + i])) << (8 * i);
+bool readRecordID(
+    const char* data,
+    std::size_t size,
+    std::size_t& pos,
+    RecordID& recordId
+) {
+    std::uint32_t pageId = 0;
+    std::uint32_t slotId = 0;
+
+    if (!readU32(data, size, pos, pageId)) {
+        return false;
     }
-    pos += 8;
+
+    if (!readU32(data, size, pos, slotId)) {
+        return false;
+    }
+
+    recordId.pageId = pageId;
+    recordId.slotId = slotId;
+
     return true;
 }
 
@@ -153,7 +168,7 @@ bool BPlusTree::writePage(std::uint32_t pageId, const BPlusNode& node) const {
             if (node.keys[i].size() > std::numeric_limits<std::uint32_t>::max()) return false;
             appendU32(data, static_cast<std::uint32_t>(node.keys[i].size()));
             data.insert(data.end(), node.keys[i].begin(), node.keys[i].end());
-            appendU64(data, static_cast<std::uint64_t>(node.values[i]));
+            appendRecordID(data, node.values[i]);
         }
     } else {
         if (node.children.size() != node.keys.size() + 1) return false;
@@ -219,16 +234,42 @@ bool BPlusTree::readPage(std::uint32_t pageId, BPlusNode& node) const {
     if (node.isLeaf) node.values.reserve(count);
 
     for (std::uint32_t i = 0; i < count; ++i) {
-        std::uint32_t keyLength = 0;
-        if (!readU32(buffer.data(), buffer.size(), pos, keyLength)) return false;
-        if (pos + keyLength > buffer.size()) return false;
-        node.keys.push_back(std::string(buffer.data() + pos, keyLength));
+    std::uint32_t keyLength = 0;
+
+        if (!readU32(
+                buffer.data(),
+                buffer.size(),
+                pos,
+                keyLength)) {
+            return false;
+        }
+
+        if (pos + keyLength > buffer.size()) {
+            return false;
+        }
+
+        node.keys.push_back(
+            std::string(
+                buffer.data() + pos,
+                keyLength
+            )
+        );
+
         pos += keyLength;
 
         if (node.isLeaf) {
-            std::uint64_t value = 0;
-            if (!readU64(buffer.data(), buffer.size(), pos, value)) return false;
-            node.values.push_back(static_cast<size_t>(value));
+            RecordID recordId;
+
+            if (!readRecordID(
+                    buffer.data(),
+                    buffer.size(),
+                    pos,
+                    recordId
+                )) {
+                return false;
+            }
+
+            node.values.push_back(recordId);
         }
     }
 
@@ -283,7 +324,7 @@ bool BPlusTree::findLeafId(const std::string& key,
     }
 }
 
-bool BPlusTree::search(const std::string& key, size_t& value) const {
+bool BPlusTree::search(const std::string& key,RecordID& recordId) const {
     invalidateRootView();
     std::uint32_t leafId = 0;
     if (!findLeafId(key, nullptr, leafId)) return false;
@@ -292,69 +333,145 @@ bool BPlusTree::search(const std::string& key, size_t& value) const {
     if (!readPage(leafId, leaf)) return false;
     const std::size_t pos = lowerBoundInLeaf(leaf, key);
     if (pos < leaf.keys.size() && compareKeys(leaf.keys[pos], key) == 0) {
-        value = leaf.values[pos];
+        recordId = leaf.values[pos];
         return true;
     }
     return false;
 }
 
-std::vector<size_t> BPlusTree::searchAll(const std::string& key) const {
+std::vector<RecordID>
+BPlusTree::searchAll(
+    const std::string& key
+) const {
     invalidateRootView();
-    std::vector<size_t> result;
+
+    std::vector<RecordID> result;
+
     std::uint32_t leafId = 0;
-    if (!findLeafId(key, nullptr, leafId)) return result;
+
+    if (!findLeafId(key,nullptr,leafId)) {return result;}
 
     BPlusNode leaf(true);
+
     while (leafId != 0) {
-        if (!readPage(leafId, leaf)) break;
-        const std::size_t pos = lowerBoundInLeaf(leaf, key);
+        if (!readPage(leafId, leaf)) {break;}
+
+        const std::size_t pos = lowerBoundInLeaf(leaf,key);
+
         for (std::size_t i = pos; i < leaf.keys.size(); ++i) {
-            const int cmp = compareKeys(leaf.keys[i], key);
-            if (cmp != 0) return result;
+
+            const int cmp = compareKeys( leaf.keys[i], key);
+
+            if (cmp != 0) {
+                return result;
+            }
+
             result.push_back(leaf.values[i]);
         }
+
         leafId = leaf.nextPageId;
-        if (leafId != 0 && !leaf.keys.empty() && compareKeys(leaf.keys.back(), key) > 0) break;
+
+        if (leafId != 0 && !leaf.keys.empty() && compareKeys(leaf.keys.back(), key) > 0) { break; }
     }
+
     return result;
 }
 
-std::vector<size_t> BPlusTree::rangeSearch(const std::string& left,
-                                           const std::string& right) const {
+std::vector<RecordID>
+BPlusTree::rangeSearch(
+    const std::string& left,
+    const std::string& right
+) const {
     invalidateRootView();
-    std::vector<size_t> result;
+
+    std::vector<RecordID> result;
+
     std::uint32_t leafId = 0;
-    if (!findLeafId(left, nullptr, leafId)) return result;
+
+    if (!findLeafId(
+            left,
+            nullptr,
+            leafId)) {
+        return result;
+    }
 
     BPlusNode leaf(true);
+
     while (leafId != 0) {
-        if (!readPage(leafId, leaf)) break;
-        const std::size_t start = lowerBoundInLeaf(leaf, left);
-        for (std::size_t i = start; i < leaf.keys.size(); ++i) {
-            if (compareKeys(leaf.keys[i], right) >= 0) return result;
-            result.push_back(leaf.values[i]);
+        if (!readPage(
+                leafId,
+                leaf)) {
+            break;
         }
+
+        const std::size_t start =
+            lowerBoundInLeaf(
+                leaf,
+                left
+            );
+
+        for (std::size_t i = start;
+             i < leaf.keys.size();
+             ++i) {
+
+            if (compareKeys(
+                    leaf.keys[i],
+                    right
+                ) >= 0) {
+                return result;
+            }
+
+            result.push_back(
+                leaf.values[i]
+            );
+        }
+
         leafId = leaf.nextPageId;
     }
+
     return result;
 }
 
-bool BPlusTree::insert(const std::string& key, size_t value) {
+bool BPlusTree::insert(const std::string& key, const RecordID& recordId) {
     invalidateRootView();
-    if (metadataPath.empty()) return false;
-    if (!ensurePageFile()) return false;
-    if (search(key, value)) return false; // INDEXED => unique
+
+    if (metadataPath.empty()) {
+        return false;
+    }
+
+    if (!ensurePageFile()) {
+        return false;
+    }
+
+    RecordID existingRecord;
+
+    if (search(key, existingRecord)) {
+        return false;
+    }
 
     if (rootPageId == 0) {
-        const std::uint32_t rootId = allocatePage();
-        if (rootId == 0) return false;
+        const std::uint32_t rootId =
+            allocatePage();
+
+        if (rootId == 0) {
+            return false;
+        }
+
         BPlusNode root(true);
+
         root.pageId = rootId;
         root.keys.push_back(key);
-        root.values.push_back(value);
-        if (!writePage(rootId, root)) return false;
+        root.values.push_back(recordId);
+
+        if (!writePage(
+                rootId,
+                root)) {
+            return false;
+        }
+
         rootPageId = rootId;
         persistMetadata();
+
         return true;
     }
 
@@ -366,7 +483,7 @@ bool BPlusTree::insert(const std::string& key, size_t value) {
     if (!readPage(leafId, page)) return false;
     const std::size_t pos = lowerBoundInLeaf(page, key);
     page.keys.insert(page.keys.begin() + static_cast<std::ptrdiff_t>(pos), key);
-    page.values.insert(page.values.begin() + static_cast<std::ptrdiff_t>(pos), value);
+    page.values.insert(page.values.begin() + static_cast<std::ptrdiff_t>(pos), recordId);
 
     if (!writePage(leafId, page)) return false;
     if (page.keys.size() < static_cast<std::size_t>(order)) {
@@ -430,7 +547,7 @@ bool BPlusTree::splitLeafAndInsertIntoParent(std::uint32_t leafId,
                                              BPlusNode& page) {
     const std::size_t mid = page.keys.size() / 2;
     std::vector<std::string> rightKeys(page.keys.begin() + static_cast<std::ptrdiff_t>(mid), page.keys.end());
-    std::vector<size_t> rightValues(page.values.begin() + static_cast<std::ptrdiff_t>(mid), page.values.end());
+    std::vector<RecordID> rightValues(page.values.begin() + static_cast<std::ptrdiff_t>(mid), page.values.end());
     const std::uint32_t oldNext = page.nextPageId;
     const std::string separator = rightKeys.front(); // первый ключ правого листа
     const std::uint32_t rightId = allocatePage();
@@ -475,16 +592,51 @@ bool BPlusTree::splitInternalAndInsertIntoParent(std::uint32_t nodeId,
     return insertSeparatorIntoParent(nodeId, separator, rightId, path, page);
 }
 
-bool BPlusTree::removeFromCurrentLeaf(std::uint32_t leafId,
-                                      const std::string& key,
-                                      BPlusNode& page) {
-    if (!readPage(leafId, page) || !page.isLeaf) return false;
-    const std::size_t pos = lowerBoundInLeaf(page, key);
-    if (pos >= page.keys.size() || compareKeys(page.keys[pos], key) != 0) return false;
+bool BPlusTree::removeFromCurrentLeaf(
+    std::uint32_t leafId,
+    const std::string& key,
+    const RecordID& recordId,
+    BPlusNode& page
+) {
+    if (!readPage(leafId, page) || !page.isLeaf) {
+        return false;
+    }
 
-    page.keys.erase(page.keys.begin() + static_cast<std::ptrdiff_t>(pos));
-    page.values.erase(page.values.begin() + static_cast<std::ptrdiff_t>(pos));
-    return writePage(leafId, page);
+    const std::size_t pos =
+        lowerBoundInLeaf(page, key);
+
+    if (pos >= page.keys.size() ||
+        compareKeys(page.keys[pos], key) != 0) {
+        return false;
+    }
+
+    std::size_t current = pos;
+
+    while (current < page.keys.size() &&
+           compareKeys(page.keys[current], key) == 0) {
+
+        if (page.values[current] == recordId) {
+
+            page.keys.erase(
+                page.keys.begin() +
+                static_cast<std::ptrdiff_t>(current)
+            );
+
+            page.values.erase(
+                page.values.begin() +
+                static_cast<std::ptrdiff_t>(current)
+            );
+
+            return writePage(
+                leafId,
+                page
+            );
+        }
+
+        ++current;
+    }
+
+    return false;
 }
 
 void BPlusTree::refreshAncestorsAfterKeyChange(
@@ -512,23 +664,17 @@ void BPlusTree::refreshAncestorsAfterKeyChange(
             return;
         }
 
-        // The changed child is the first child, so this internal node's
-        // minimum changed too. Propagate the new minimum to its parent.
         currentChildId = parentId;
     }
 }
 
-bool BPlusTree::borrowFromRight(std::uint32_t nodeId,
-                                std::uint32_t parentId,
-                                size_t index,
-                                BPlusNode& page) {
+bool BPlusTree::borrowFromRight(std::uint32_t nodeId, std::uint32_t parentId, size_t index, BPlusNode& page) {
     if (!readPage(parentId, page) || page.isLeaf || index >= page.keys.size()) return false;
     if (index + 1 >= page.children.size()) return false;
 
     const std::uint32_t rightId = page.children[index + 1];
     const std::uint32_t leftId = nodeId;
 
-    // Reuse the same BPlusNode object for parent, sibling and current pages.
     const std::string parentSeparator = page.keys[index];
     (void)parentSeparator;
 
@@ -536,16 +682,13 @@ bool BPlusTree::borrowFromRight(std::uint32_t nodeId,
     if (page.keys.size() <= static_cast<std::size_t>((order - 1) / 2)) return false;
 
     const std::string borrowedKey = page.keys.front();
-    const size_t borrowedValue = page.values.empty() ? 0 : page.values.front();
+    const RecordID borrowedValue = page.values.empty() ? RecordID{} : page.values.front();
     const bool leaf = page.isLeaf;
     const std::uint32_t borrowedChild = (!leaf && !page.children.empty()) ? page.children.front() : 0;
 
     page.keys.erase(page.keys.begin());
     if (leaf) page.values.erase(page.values.begin());
     else page.children.erase(page.children.begin());
-    // For an internal page, keys[i] describes the minimum of child i+1.
-    // After moving the first child to the left sibling, the new minimum of
-    // this right page is the key that used to separate its first two children.
     const std::string newParentSeparator = leaf
         ? (page.keys.empty() ? parentSeparator : page.keys.front())
         : borrowedKey;
@@ -580,7 +723,7 @@ bool BPlusTree::borrowFromLeft(std::uint32_t nodeId,
 
     const bool leaf = page.isLeaf;
     std::string borrowedKey;
-    size_t borrowedValue = 0;
+    RecordID borrowedValue{};
     std::uint32_t borrowedChild = 0;
     if (leaf) {
         borrowedKey = page.keys.back();
@@ -618,9 +761,6 @@ bool BPlusTree::mergeWithSibling(std::uint32_t nodeId,
     if (!readPage(parentId, page) || page.isLeaf || page.children.size() < 2) return false;
     if (index >= page.children.size()) return false;
 
-    // Merge the underfull node with one adjacent sibling. When a left sibling
-    // exists, merge into it; otherwise merge the current node with its right
-    // sibling. The parent separator is moved into an internal-node merge.
     std::uint32_t leftId = 0;
     std::uint32_t rightId = 0;
     std::size_t separatorIndex = 0;
@@ -643,7 +783,7 @@ bool BPlusTree::mergeWithSibling(std::uint32_t nodeId,
     const bool leaf = page.isLeaf;
     const std::uint32_t rightNext = page.nextPageId;
     const std::vector<std::string> rightKeys = page.keys;
-    const std::vector<size_t> rightValues = page.values;
+    const std::vector<RecordID> rightValues = page.values;
     const std::vector<std::uint32_t> rightChildren = page.children;
 
     if (!readPage(leftId, page)) return false;
@@ -719,7 +859,7 @@ void BPlusTree::shrinkRoot(BPlusNode& page) {
     persistMetadata();
 }
 
-bool BPlusTree::remove(const std::string& key) {
+bool BPlusTree::remove(const std::string& key, const RecordID& recordId) {
     invalidateRootView();
     if (rootPageId == 0) return false;
 
@@ -728,7 +868,7 @@ bool BPlusTree::remove(const std::string& key) {
     if (!findLeafId(key, &path, leafId)) return false;
 
     BPlusNode page(true);
-    if (!removeFromCurrentLeaf(leafId, key, page)) return false;
+    if (!removeFromCurrentLeaf(leafId, key, recordId, page)) return false;
 
     if (leafId == rootPageId) {
         shrinkRoot(page);
@@ -755,9 +895,9 @@ BPlusNode* BPlusTree::getRoot() const {
     return rootView.get();
 }
 
-std::vector<std::pair<std::string, size_t>> BPlusTree::getAllKeyValues() const {
+std::vector<std::pair<std::string, RecordID>> BPlusTree::getAllKeyValues() const {
     invalidateRootView();
-    std::vector<std::pair<std::string, size_t>> result;
+    std::vector<std::pair<std::string, RecordID>> result;
     if (rootPageId == 0) return result;
 
     BPlusNode page(true);
@@ -777,37 +917,6 @@ std::vector<std::pair<std::string, size_t>> BPlusTree::getAllKeyValues() const {
         currentId = page.nextPageId;
     }
     return result;
-}
-
-void BPlusTree::shiftRowIdsAfterDeleted(const std::vector<size_t>& deletedRowIds) {
-    invalidateRootView();
-    if (deletedRowIds.empty() || rootPageId == 0) return;
-
-    std::vector<size_t> sorted = deletedRowIds;
-    std::sort(sorted.begin(), sorted.end());
-    sorted.erase(std::unique(sorted.begin(), sorted.end()), sorted.end());
-
-    BPlusNode page(true);
-    std::uint32_t currentId = rootPageId;
-    while (true) {
-        if (!readPage(currentId, page)) return;
-        if (page.isLeaf) break;
-        if (page.children.empty()) return;
-        currentId = page.children.front();
-    }
-
-    while (currentId != 0) {
-        if (!readPage(currentId, page)) return;
-        for (std::size_t i = 0; i < page.values.size(); ++i) {
-            const size_t oldId = page.values[i];
-            const std::size_t shift = static_cast<std::size_t>(
-                std::lower_bound(sorted.begin(), sorted.end(), oldId) - sorted.begin());
-            if (shift > 0) page.values[i] = oldId - shift;
-        }
-        if (!writePage(currentId, page)) return;
-        currentId = page.nextPageId;
-    }
-    persistMetadata();
 }
 
 std::string BPlusTree::jsonEscape(const std::string& value) {
@@ -833,7 +942,7 @@ void BPlusTree::persistMetadata() const {
 
     out << "{\n";
     out << "  \"type\": \"bplus_tree_index\",\n";
-    out << "  \"version\": 2,\n";
+    out << "  \"version\": 3,\n";
     out << "  \"column\": \"" << jsonEscape(metadataColumn) << "\",\n";
     out << "  \"keyType\": \"" << jsonEscape(keyType) << "\",\n";
     out << "  \"order\": " << order << ",\n";
@@ -916,136 +1025,29 @@ bool BPlusTree::loadMetadata(const std::string& path, int& version) {
     return true;
 }
 
-bool BPlusTree::readLegacyPage(const std::string& json,
-                               std::size_t objectStart,
-                               std::size_t objectEnd,
-                               BPlusNode& page) const {
-    const std::string object = json.substr(objectStart, objectEnd - objectStart + 1);
-
-    std::uint32_t pageId = 0;
-    if (!parseUnsignedField(object, "pageId", pageId)) return false;
-    page.pageId = pageId;
-    const std::size_t leafPos = object.find("\"isLeaf\"");
-    const std::size_t colon = object.find(':', leafPos);
-    page.isLeaf = leafPos != std::string::npos && colon != std::string::npos &&
-                  object.find("true", colon) < object.find_first_of(",}", colon);
-
-    page.keys.clear();
-    page.values.clear();
-    page.children.clear();
-    page.nextPageId = 0;
-
-    const std::size_t keysPos = object.find("\"keys\":[");
-    if (keysPos == std::string::npos) return false;
-    const std::size_t keysBegin = keysPos + 8;
-    const std::size_t keysEnd = object.find(']', keysBegin);
-    if (keysEnd == std::string::npos) return false;
-    std::size_t q = keysBegin;
-    while (q < keysEnd) {
-        const std::size_t q1 = object.find('"', q);
-        if (q1 == std::string::npos || q1 >= keysEnd) break;
-        const std::size_t q2 = object.find('"', q1 + 1);
-        if (q2 == std::string::npos || q2 > keysEnd) return false;
-        page.keys.push_back(object.substr(q1 + 1, q2 - q1 - 1));
-        q = q2 + 1;
-    }
-
-    if (page.isLeaf) {
-        const std::size_t idsPos = object.find("\"rowIds\":[");
-        if (idsPos != std::string::npos) {
-            const std::size_t idsBegin = idsPos + 10;
-            const std::size_t idsEnd = object.find(']', idsBegin);
-            if (idsEnd == std::string::npos) return false;
-            std::size_t p = idsBegin;
-            while (p < idsEnd) {
-                const std::size_t comma = object.find(',', p);
-                const std::size_t end = comma == std::string::npos || comma > idsEnd ? idsEnd : comma;
-                const std::string number = trimCopy(object.substr(p, end - p));
-                if (!number.empty()) {
-                    try { page.values.push_back(static_cast<size_t>(std::stoull(number))); }
-                    catch (...) { return false; }
-                }
-                p = end + 1;
-            }
-        }
-        std::uint32_t next = 0;
-        if (parseUnsignedField(object, "nextLeafPageId", next)) {
-            page.nextPageId = next;
-        }
-    } else {
-        const std::size_t childrenPos = object.find("\"children\":[");
-        if (childrenPos == std::string::npos) return false;
-        const std::size_t begin = childrenPos + 12;
-        const std::size_t end = object.find(']', begin);
-        if (end == std::string::npos) return false;
-        std::size_t p = begin;
-        while (p < end) {
-            const std::size_t comma = object.find(',', p);
-            const std::size_t stop = comma == std::string::npos || comma > end ? end : comma;
-            const std::string number = trimCopy(object.substr(p, stop - p));
-            if (!number.empty()) {
-                try { page.children.push_back(static_cast<std::uint32_t>(std::stoul(number))); }
-                catch (...) { return false; }
-            }
-            p = stop + 1;
-        }
-    }
-    return true;
-}
-
-bool BPlusTree::migrateLegacyJson(const std::string& path) {
-    std::ifstream in(path.c_str(), std::ios::binary);
-    if (!in.is_open()) return false;
-    std::stringstream ss;
-    ss << in.rdbuf();
-    const std::string json = ss.str();
-
-    std::uint32_t oldRoot = 0;
-    if (!parseUnsignedField(json, "rootPageId", oldRoot)) return false;
-    int oldOrder = order;
-    parseIntField(json, "order", oldOrder);
-    order = std::max(3, oldOrder);
-
-    std::uint32_t maxPage = 0;
-    ensurePageFile();
-    BPlusNode page(true);
-
-    std::size_t pos = json.find("{\"pageId\":");
-    while (pos != std::string::npos) {
-        const std::size_t end = json.find('}', pos);
-        if (end == std::string::npos) return false;
-        if (!readLegacyPage(json, pos, end, page)) return false;
-        maxPage = std::max(maxPage, page.pageId);
-        if (!writePage(page.pageId, page)) return false;
-        pos = json.find("{\"pageId\":", end + 1);
-    }
-
-    rootPageId = oldRoot;
-    nextPageId = maxPage + 1;
-    metadataPath = path;
-    pagesPath = path + ".pages";
-    persistMetadata();
-    return rootPageId != 0;
-}
-
 void BPlusTree::saveToJsonFile(const std::string& path, const std::string& column) {
     invalidateRootView();
     setStoragePath(path, column);
 }
 
-bool BPlusTree::loadFromJsonFile(const std::string& path) {
+bool BPlusTree::loadFromJsonFile(
+    const std::string& path
+) {
     invalidateRootView();
+
     int version = 0;
-    if (loadMetadata(path, version)) {
-        metadataColumn.clear();
-        if (version >= 2) {
-            return ensurePageFile();
-        }
+
+    if (!loadMetadata(
+            path,
+            version)) {
+        return false;
     }
 
-    // Version 1 was the old implementation where all BPlusNode objects were
-    // recreated in RAM. Convert it once into page storage, one node at a time.
-    return migrateLegacyJson(path);
+    if (version != 3) {
+        return false;
+    }
+
+    return ensurePageFile();
 }
 
 int BPlusTree::getMaxPageId() const {
