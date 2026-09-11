@@ -210,13 +210,13 @@ bool evaluateComparison(
             int value = std::stoi(leftValue);
             int l = std::stoi(rightValue);
             int r = std::stoi(right2Value);
-            return value >= l && value <= r;
+            return value >= l && value < r;
         }
 
         if (leftType == "string") {
             std::string l = rightValue;
             std::string r = right2Value;
-            return leftValue >= l && leftValue <= r;
+            return leftValue >= l && leftValue < r;
         }
 
         error = "BETWEEN on unsupported type";
@@ -1515,33 +1515,6 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                     indexedRecordIds.end(),
                     recordIds.begin(),
                     recordIds.end()
-                );
-
-                Value rightValue;
-
-                if (schema[indexedColumn].type == "int") {
-                    rightValue.type = Value::INT;
-                    rightValue.intValue =
-                        std::stoi(whereCond->right2);
-                    rightValue.isNull = false;
-                } else {
-                    rightValue.type = Value::STRING;
-                    rightValue.stringValue =
-                        whereCond->right2;
-                    rightValue.isNull = false;
-                }
-
-                auto rightRecordIds =
-                    indexManager.find(
-                        getPureTableName(cmd.tableName),
-                        colName,
-                        rightValue
-                    );
-
-                indexedRecordIds.insert(
-                    indexedRecordIds.end(),
-                    rightRecordIds.begin(),
-                    rightRecordIds.end()
                 );
 
                 useIndex = true;
