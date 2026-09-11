@@ -432,7 +432,7 @@ bool BPlusTree::splitLeafAndInsertIntoParent(std::uint32_t leafId,
     std::vector<std::string> rightKeys(page.keys.begin() + static_cast<std::ptrdiff_t>(mid), page.keys.end());
     std::vector<size_t> rightValues(page.values.begin() + static_cast<std::ptrdiff_t>(mid), page.values.end());
     const std::uint32_t oldNext = page.nextPageId;
-    const std::string separator = rightKeys.front();
+    const std::string separator = rightKeys.front(); // первый ключ правого листа
     const std::uint32_t rightId = allocatePage();
     if (rightId == 0) return false;
 
@@ -441,15 +441,12 @@ bool BPlusTree::splitLeafAndInsertIntoParent(std::uint32_t leafId,
     page.nextPageId = rightId;
     if (!writePage(leafId, page)) return false;
 
-    // Reuse the same BPlusNode object for the right page instead of creating
-    // a second node in RAM. The right page is immediately persisted.
     page.pageId = rightId;
     page.keys.swap(rightKeys);
     page.values.swap(rightValues);
     page.nextPageId = oldNext;
     if (!writePage(rightId, page)) return false;
 
-    // Continue with the same single in-memory page object.
     return insertSeparatorIntoParent(leafId, separator, rightId, path, page);
 }
 
@@ -470,8 +467,6 @@ bool BPlusTree::splitInternalAndInsertIntoParent(std::uint32_t nodeId,
     page.children.swap(leftChildren);
     if (!writePage(nodeId, page)) return false;
 
-    // Reuse the same BPlusNode object for the right page. No second node is
-    // allocated; only temporary vectors containing the page payload exist.
     page.pageId = rightId;
     page.keys.swap(rightKeys);
     page.children.swap(rightChildren);

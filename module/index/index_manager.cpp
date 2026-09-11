@@ -23,8 +23,6 @@ void IndexManager::createIndex(const std::string& table,
         indexes[table][column] = new BPlusTree(order, type);
     }
 
-    // IMPORTANT: the B+ tree itself is disk-backed. Only page IDs/metadata
-    // stay in IndexManager; nodes are loaded on demand from this file.
     if (!activeTablePath.empty() && table == activeTable) {
         const std::filesystem::path idxPath =
             std::filesystem::path(activeTablePath) / (column + ".idx");
@@ -110,15 +108,12 @@ void IndexManager::loadIndex(const std::string& table,
     in.close();
     if (firstLine.find("{") != std::string::npos ||
         firstLine.find("\"type\"") != std::string::npos) {
-        // Current format: the .idx file contains only metadata; the actual
-        // B+ tree pages live in <column>.idx.pages and are read lazily.
         if (indexes[table][column]->loadFromJsonFile(path)) {
             indexes[table][column]->setStoragePath(path, column);
             return;
         }
     }
 
-    // Legacy text fallback. Each insert writes only the affected page to disk.
     in.open(path);
     if (!in.is_open()) return;
 
