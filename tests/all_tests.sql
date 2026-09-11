@@ -22,7 +22,17 @@ SELECT * FROM users;
 
 SELECT * FROM users WHERE id == 1;
 
+SELECT * FROM users WHERE id == 6;
+
 SELECT * FROM users WHERE id BETWEEN 2 AND 6;
+
+SELECT * FROM users WHERE id > 3;
+
+SELECT * FROM users WHERE id >= 3;
+
+SELECT * FROM users WHERE id < 5;
+
+SELECT * FROM users WHERE id <= 5;
 
 SELECT * FROM users
 WHERE age >= 25 AND city == "Moscow";

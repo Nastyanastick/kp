@@ -210,13 +210,13 @@ bool evaluateComparison(
             int value = std::stoi(leftValue);
             int l = std::stoi(rightValue);
             int r = std::stoi(right2Value);
-            return value >= l && value < r;
+            return value >= l && value <= r;
         }
 
         if (leftType == "string") {
             std::string l = rightValue;
             std::string r = right2Value;
-            return leftValue >= l && leftValue < r;
+            return leftValue >= l && leftValue <= r;
         }
 
         error = "BETWEEN on unsupported type";
@@ -1503,7 +1503,6 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                 useIndex = true;
             }
 
-
             else if (whereCond->op == "BETWEEN") {
 
                 auto recordIds = indexManager.findRange(
@@ -1516,6 +1515,33 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                     indexedRecordIds.end(),
                     recordIds.begin(),
                     recordIds.end()
+                );
+
+                Value rightValue;
+
+                if (schema[indexedColumn].type == "int") {
+                    rightValue.type = Value::INT;
+                    rightValue.intValue =
+                        std::stoi(whereCond->right2);
+                    rightValue.isNull = false;
+                } else {
+                    rightValue.type = Value::STRING;
+                    rightValue.stringValue =
+                        whereCond->right2;
+                    rightValue.isNull = false;
+                }
+
+                auto rightRecordIds =
+                    indexManager.find(
+                        getPureTableName(cmd.tableName),
+                        colName,
+                        rightValue
+                    );
+
+                indexedRecordIds.insert(
+                    indexedRecordIds.end(),
+                    rightRecordIds.begin(),
+                    rightRecordIds.end()
                 );
 
                 useIndex = true;
@@ -1547,8 +1573,11 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                         std::string(100, char(127));
                 }
 
-                if (whereCond->op == ">" ||
-                    whereCond->op == ">=") {
+                if (whereCond->op == ">") {
+
+                    leftKey = bound;
+
+                } else if (whereCond->op == ">=") {
 
                     leftKey = bound;
 
@@ -1568,6 +1597,34 @@ void selectFromAST(const sql::SelectCmd& cmd) {
                     recordIds.begin(),
                     recordIds.end()
                 );
+
+                if (whereCond->op == "<=") {
+
+                    Value boundValue;
+
+                    if (schema[indexedColumn].type == "int") {
+                        boundValue.type = Value::INT;
+                        boundValue.intValue = std::stoi(bound);
+                        boundValue.isNull = false;
+                    } else {
+                        boundValue.type = Value::STRING;
+                        boundValue.stringValue = bound;
+                        boundValue.isNull = false;
+                    }
+
+                    auto equalRecordIds =
+                        indexManager.find(
+                            getPureTableName(cmd.tableName),
+                            colName,
+                            boundValue
+                        );
+
+                    indexedRecordIds.insert(
+                        indexedRecordIds.end(),
+                        equalRecordIds.begin(),
+                        equalRecordIds.end()
+                    );
+                }
 
                 useIndex = true;
             }
@@ -2028,6 +2085,28 @@ void selectFromAST(const sql::SelectCmd& cmd) {
 
                     row[i] =
                         pool.resolve(id);
+                }
+            }
+
+            if (whereCond) {
+                std::string error;
+
+                bool matched =
+                    rowMatchesCondition(
+                        row,
+                        schema,
+                        whereCond,
+                        error
+                    );
+
+                if (!error.empty()) {
+                    std::cout << "Error: "
+                            << error << "\n";
+                    return;
+                }
+
+                if (!matched) {
+                    continue;
                 }
             }
 
