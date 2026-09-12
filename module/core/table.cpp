@@ -234,11 +234,6 @@ bool evaluateComparison(
             return false;
         }
 
-        // The assignment specifies that the right-hand side of LIKE is a
-        // regular expression. For backward compatibility with the existing
-        // tests, patterns containing SQL wildcards '%' or '_' keep their
-        // previous LIKE semantics; patterns without them are treated as
-        // regular expressions verbatim.
         std::string regexPattern = rightValue;
         const bool hasRegexMeta = rightValue.find_first_of(".[]{}()\\*+?|^$") != std::string::npos;
         if (!hasRegexMeta &&
@@ -833,6 +828,171 @@ void insertFromAST(const sql::InsertCmd& cmd) {
         << " row(s) inserted\n";
 }
 
+
+static bool findRowsUsingIndex(
+    const ConditionNode* whereCond,
+    const std::vector<Column>& schema,
+    IndexManager& indexManager,
+    const std::string& tableName,
+    std::vector<RecordID>& recordIds
+) {
+    if (!whereCond ||
+        whereCond->type != ConditionNode::COMPARISON) {
+        return false;
+    }
+
+    if (whereCond->op == "LIKE") {
+        return false;
+    }
+
+    int indexedColumn = -1;
+
+    for (size_t i = 0; i < schema.size(); i++) {
+        if (schema[i].name == whereCond->left &&
+            schema[i].indexed) {
+
+            indexedColumn = static_cast<int>(i);
+            break;
+        }
+    }
+
+    if (indexedColumn == -1 ||
+        !indexManager.hasIndex(whereCond->left)) {
+        return false;
+    }
+
+    const std::string colName = whereCond->left;
+    const std::string pureType = schema[indexedColumn].type;
+
+    if (whereCond->op == "==" ||
+        whereCond->op == "=") {
+
+        for (const auto& col : schema) {
+            if (col.name == whereCond->right) {
+                return false;
+            }
+        }
+
+        const std::string& key = whereCond->right;
+
+        Value value;
+        value.isNull = false;
+
+        if (pureType == "int") {
+            if (!isIntegerValue(key)) {
+                return false;
+            }
+
+            value.type = Value::INT;
+            value.intValue = std::stoi(key);
+        }
+        else {
+            value.type = Value::STRING;
+            value.stringValue = key;
+        }
+
+        recordIds = indexManager.find(
+            tableName,
+            colName,
+            value
+        );
+
+        return true;
+    }
+
+    if (whereCond->op == "BETWEEN") {
+        recordIds = indexManager.findRange(
+            colName,
+            whereCond->right,
+            whereCond->right2
+        );
+
+        return true;
+    }
+
+    if (whereCond->op == ">" ||
+        whereCond->op == ">=" ||
+        whereCond->op == "<" ||
+        whereCond->op == "<=") {
+
+        const std::string& bound = whereCond->right;
+
+        std::string leftKey;
+        std::string rightKey;
+
+        if (pureType == "int") {
+            if (!isIntegerValue(bound)) {
+                return false;
+            }
+
+            leftKey =
+                std::to_string(
+                    std::numeric_limits<int>::min()
+                );
+
+            rightKey =
+                std::to_string(
+                    std::numeric_limits<int>::max()
+                );
+        }
+        else {
+            leftKey = "";
+            rightKey =
+                std::string(100, char(127));
+        }
+
+        if (whereCond->op == ">" ||
+            whereCond->op == ">=") {
+
+            leftKey = bound;
+        }
+        else {
+            rightKey = bound;
+        }
+
+        recordIds = indexManager.findRange(
+            colName,
+            leftKey,
+            rightKey
+        );
+
+        if (whereCond->op == "<=") {
+            Value boundValue;
+            boundValue.isNull = false;
+
+            if (pureType == "int") {
+                if (!isIntegerValue(bound)) {
+                    return false;
+                }
+
+                boundValue.type = Value::INT;
+                boundValue.intValue = std::stoi(bound);
+            }
+            else {
+                boundValue.type = Value::STRING;
+                boundValue.stringValue = bound;
+            }
+
+            auto equalRecordIds =
+                indexManager.find(
+                    tableName,
+                    colName,
+                    boundValue
+                );
+
+            recordIds.insert(
+                recordIds.end(),
+                equalRecordIds.begin(),
+                equalRecordIds.end()
+            );
+        }
+
+        return true;
+    }
+
+    return false;
+}
+
 void deleteFromAST(const sql::DeleteCmd& cmd) {
     std::string tablePath =
         resolveTablePath(cmd.tableName);
@@ -891,8 +1051,19 @@ void deleteFromAST(const sql::DeleteCmd& cmd) {
         );
     }
 
-    std::vector<RecordID> recordIds =
-        storage.getAllRecordIds();
+    std::vector<RecordID> recordIds;
+
+    const bool useIndex = findRowsUsingIndex(
+        (const ConditionNode*)cmd.where,
+        schema,
+        indexManager,
+        getPureTableName(cmd.tableName),
+        recordIds
+    );
+
+    if (!useIndex) {
+        recordIds = storage.getAllRecordIds();
+    }
 
     std::string pureTableName =
         getPureTableName(cmd.tableName);
@@ -1141,8 +1312,19 @@ void updateFromAST(const sql::UpdateCmd& cmd) {
     std::string pureTableName =
         getPureTableName(cmd.tableName);
 
-    std::vector<RecordID> recordIds =
-        storage.getAllRecordIds();
+    std::vector<RecordID> recordIds;
+
+    const bool useIndex = findRowsUsingIndex(
+        (const ConditionNode*)cmd.where,
+        schema,
+        indexManager,
+        pureTableName,
+        recordIds
+    );
+
+    if (!useIndex) {
+        recordIds = storage.getAllRecordIds();
+    }
 
     int updatedCount = 0;
 
