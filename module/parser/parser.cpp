@@ -140,6 +140,12 @@ void runInteractive() {
             break;
         }
 
+        if (buffer.size() + line.size() + 1 > MAX_COMMAND_LENGTH) {
+            std::cout << "Error: command is too long\n";
+            buffer.clear();
+            continue;
+        }
+
         buffer += line + '\n';
 
         if (buffer.find(';') != std::string::npos) {
